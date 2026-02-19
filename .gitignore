@@ -1,0 +1,27 @@
+# Maven
+target/
+*.war
+*.ear
+*.zip
+*.tar.gz
+*.rar
+*.log
+
+# Wrapper (optional, many people commit this, but user asked to remove "other directory")
+!.mvn/wrapper/maven-wrapper.jar
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+*.classpath
+*.project
+*.settings/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# SentinAI Specific
+# User requested NOT to push the sample app
+sentinai-sample/
