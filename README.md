@@ -2,39 +2,44 @@
 
 **AI-Powered API Security for Spring Boot — Just Add a Dependency.**
 
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.tapeshchavle/sentinai-spring-boot-starter.svg)](https://central.sonatype.com/artifact/io.github.tapeshchavle/sentinai-spring-boot-starter)
+[![Java 17+](https://img.shields.io/badge/Java-17%2B-blue)](https://adoptium.net)
+[![Spring Boot 3.4+](https://img.shields.io/badge/Spring%20Boot-3.4%2B-brightgreen)](https://spring.io/projects/spring-boot)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 SentinAI is a Spring Boot Starter that protects your APIs using AI-driven threat detection. It catches attacks that static WAFs and rate limiters miss — credential stuffing, application-layer DDoS, data leaks, and authorization bypasses.
 
 ---
 
-## Architecture
+## Installation
 
-![SentinAI Architecture](docs/images/architecture.png)
+SentinAI is available on **Maven Central** — no extra repository config needed.
 
-> SentinAI sits **inside** Spring Security's filter chain — not as a separate gateway. It runs **after** authentication so it knows who the user is.
+### Maven
+```xml
+<dependency>
+    <groupId>io.github.tapeshchavle</groupId>
+    <artifactId>sentinai-spring-boot-starter</artifactId>
+    <version>1.0.0</version>
+</dependency>
+```
 
-### Performance Impact
+### Gradle
+```groovy
+implementation 'io.github.tapeshchavle:sentinai-spring-boot-starter:1.0.0'
+```
 
-| Operation | Latency Added |
-|:---|:---|
-| Blacklist check (Redis/Memory) | ~1ms |
-| Regex pattern matching | ~0.1ms |
-| BOLA ID tracking | ~0.5ms |
-| DLP response scan | ~2-5ms |
-| **Total sync overhead** | **~3-7ms** |
-| AI analysis (async) | **0ms** *(background thread)* |
+### Gradle (Kotlin DSL)
+```kotlin
+implementation("io.github.tapeshchavle:sentinai-spring-boot-starter:1.0.0")
+```
 
 ---
 
 ## Quick Start
 
 ### 1. Add Dependency
-```xml
-<dependency>
-    <groupId>com.sentinai</groupId>
-    <artifactId>sentinai-spring-boot-starter</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
-</dependency>
-```
+Add the Maven/Gradle snippet above to your project. No repository configuration needed.
 
 ### 2. Set API Key
 ```yaml
@@ -52,6 +57,23 @@ SentinAI starts in **MONITOR mode** — logs threats but doesn't block. Review l
 [SentinAI] ⚠️ WOULD HAVE BLOCKED 1.2.3.4 — credential stuffing (92% confidence)
 [SentinAI] ⚠️ Response to GET /api/users/5 contains password hash — WOULD HAVE REDACTED
 ```
+
+---
+
+## Architecture
+
+> SentinAI sits **inside** Spring Security's filter chain — not as a separate gateway. It runs **after** authentication so it knows who the user is.
+
+### Performance Impact
+
+| Operation | Latency Added |
+|:---|:---|
+| Blacklist check (Redis/Memory) | ~1ms |
+| Regex pattern matching | ~0.1ms |
+| BOLA ID tracking | ~0.5ms |
+| DLP response scan | ~2-5ms |
+| **Total sync overhead** | **~3-7ms** |
+| AI analysis (async) | **0ms** *(background thread)* |
 
 ---
 
@@ -128,9 +150,33 @@ SentinAI auto-discovers any `@Component` implementing `SecurityModule`.
 
 ---
 
+## Available Artifacts on Maven Central
+
+All modules are published under `io.github.tapeshchavle`:
+
+| Artifact | Description |
+|:---|:---|
+| `sentinai-spring-boot-starter` | ⭐ Use this — pulls in everything automatically |
+| `sentinai-core` | Core engine, plugin system, and shared models |
+| `sentinai-module-credential-guard` | Credential stuffing detection module |
+| `sentinai-module-query-shield` | App-layer DDoS protection module |
+| `sentinai-module-data-leak-prevention` | Data leak prevention module |
+| `sentinai-module-cost-protection` | AI cost protection module |
+| `sentinai-module-bola-detection` | BOLA/IDOR detection module |
+
+Browse on Maven Central: [search.maven.org](https://search.maven.org/search?q=g:io.github.tapeshchavle)
+
+---
+
 ## Tech Stack
 
 - **Java 17+** / **Spring Boot 3.4+**
 - **Spring Security** filter chain integration
 - **Spring AI** (OpenAI-compatible — Kimi, Nvidia NIM, Ollama)
 - **Redis** (production) or **In-Memory** (development)
+
+---
+
+## License
+
+MIT License — see [LICENSE](LICENSE) for details.

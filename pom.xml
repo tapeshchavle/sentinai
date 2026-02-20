@@ -4,9 +4,9 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.sentinai</groupId>
+    <groupId>io.github.tapeshchavle</groupId>
     <artifactId>sentinai-parent</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>1.0.0</version>
     <packaging>pom</packaging>
 
     <name>SentinAI</name>
@@ -32,6 +32,28 @@
         <module>sentinai-spring-boot-starter</module>
     </modules>
 
+    <licenses>
+        <license>
+            <name>MIT License</name>
+            <url>https://opensource.org/licenses/MIT</url>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <id>tapeshchavle</id>
+            <name>Tapesh Chavle</name>
+            <email>tapeshchavle@gmail.com</email>
+            <url>https://github.com/tapeshchavle</url>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:git://github.com/tapeshchavle/sentinai.git</connection>
+        <developerConnection>scm:git:ssh://github.com/tapeshchavle/sentinai.git</developerConnection>
+        <url>https://github.com/tapeshchavle/sentinai/tree/main</url>
+    </scm>
+
     <dependencyManagement>
         <dependencies>
             <dependency>
@@ -44,37 +66,37 @@
 
             <!-- Internal modules -->
             <dependency>
-                <groupId>com.sentinai</groupId>
+                <groupId>io.github.tapeshchavle</groupId>
                 <artifactId>sentinai-core</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
-                <groupId>com.sentinai</groupId>
+                <groupId>io.github.tapeshchavle</groupId>
                 <artifactId>sentinai-module-credential-guard</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
-                <groupId>com.sentinai</groupId>
+                <groupId>io.github.tapeshchavle</groupId>
                 <artifactId>sentinai-module-query-shield</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
-                <groupId>com.sentinai</groupId>
+                <groupId>io.github.tapeshchavle</groupId>
                 <artifactId>sentinai-module-data-leak-prevention</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
-                <groupId>com.sentinai</groupId>
+                <groupId>io.github.tapeshchavle</groupId>
                 <artifactId>sentinai-module-cost-protection</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
-                <groupId>com.sentinai</groupId>
+                <groupId>io.github.tapeshchavle</groupId>
                 <artifactId>sentinai-module-bola-detection</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
-                <groupId>com.sentinai</groupId>
+                <groupId>io.github.tapeshchavle</groupId>
                 <artifactId>sentinai-spring-boot-starter</artifactId>
                 <version>${project.version}</version>
             </dependency>
@@ -89,24 +111,85 @@
         </repository>
     </repositories>
 
-    <licenses>
-        <license>
-            <name>MIT License</name>
-            <url>https://opensource.org/licenses/MIT</url>
-        </license>
-    </licenses>
+    <build>
+        <plugins>
+            <!-- Central Publishing Plugin (New Maven Central) -->
+            <plugin>
+                <groupId>org.sonatype.central</groupId>
+                <artifactId>central-publishing-maven-plugin</artifactId>
+                <version>0.6.0</version>
+                <extensions>true</extensions>
+                <configuration>
+                    <publishingServerId>central</publishingServerId>
+                    <autoPublish>true</autoPublish>
+                    <waitUntilPublished>true</waitUntilPublished>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 
-    <developers>
-        <developer>
-            <name>Tapesh Chavle</name>
-        </developer>
-    </developers>
+    <profiles>
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <!-- Source Plugin (Required for Central) -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <version>3.2.1</version>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals>
+                                    <goal>jar-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
 
-    <distributionManagement>
-        <repository>
-            <id>github</id>
-            <name>GitHub Packages</name>
-            <url>https://maven.pkg.github.com/tapeshchavle/sentinai</url>
-        </repository>
-    </distributionManagement>
+                    <!-- Javadoc Plugin (Required for Central) -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <version>3.4.1</version>
+                        <configuration>
+                            <doclint>none</doclint>
+                            <failOnError>false</failOnError>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+
+                    <!-- GPG Signing Plugin (Required for Central) -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>3.0.1</version>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                                <configuration>
+                                    <gpgArguments>
+                                        <arg>--pinentry-mode</arg>
+                                        <arg>loopback</arg>
+                                    </gpgArguments>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

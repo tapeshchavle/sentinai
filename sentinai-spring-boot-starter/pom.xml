@@ -5,9 +5,9 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>com.sentinai</groupId>
+        <groupId>io.github.tapeshchavle</groupId>
         <artifactId>sentinai-parent</artifactId>
-        <version>1.0.0-SNAPSHOT</version>
+        <version>1.0.0</version>
     </parent>
 
     <artifactId>sentinai-spring-boot-starter</artifactId>
@@ -17,29 +17,29 @@
     <dependencies>
         <!-- Core -->
         <dependency>
-            <groupId>com.sentinai</groupId>
+            <groupId>io.github.tapeshchavle</groupId>
             <artifactId>sentinai-core</artifactId>
         </dependency>
 
         <!-- All modules (optional — user can exclude what they don't want) -->
         <dependency>
-            <groupId>com.sentinai</groupId>
+            <groupId>io.github.tapeshchavle</groupId>
             <artifactId>sentinai-module-credential-guard</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.sentinai</groupId>
+            <groupId>io.github.tapeshchavle</groupId>
             <artifactId>sentinai-module-query-shield</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.sentinai</groupId>
+            <groupId>io.github.tapeshchavle</groupId>
             <artifactId>sentinai-module-data-leak-prevention</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.sentinai</groupId>
+            <groupId>io.github.tapeshchavle</groupId>
             <artifactId>sentinai-module-cost-protection</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.sentinai</groupId>
+            <groupId>io.github.tapeshchavle</groupId>
             <artifactId>sentinai-module-bola-detection</artifactId>
         </dependency>
 
