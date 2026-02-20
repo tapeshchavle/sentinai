@@ -19,6 +19,18 @@ OWASP API Security #1 vulnerability. A user with ID 42 calls `GET /api/orders/10
 
 **Auto-detects resource IDs** in paths matching `/api/{resource}/{id}` — supports both numeric IDs and UUIDs.
 
+## Independent Installation
+
+If you don't want the full `sentinai-spring-boot-starter`, you can include just this module:
+
+```xml
+<dependency>
+    <groupId>io.github.tapeshchavle</groupId>
+    <artifactId>sentinai-module-bola-detection</artifactId>
+    <version>1.0.0</version>
+</dependency>
+```
+
 ## Integration
 
 ### Minimal

@@ -37,6 +37,18 @@ javascript:         →  Protocol-based XSS
 eval(               →  Code injection
 ```
 
+## Independent Installation
+
+If you don't want the full `sentinai-spring-boot-starter`, you can include just this module:
+
+```xml
+<dependency>
+    <groupId>io.github.tapeshchavle</groupId>
+    <artifactId>sentinai-module-query-shield</artifactId>
+    <version>1.0.0</version>
+</dependency>
+```
+
 ## Integration
 
 ### Minimal

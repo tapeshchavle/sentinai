@@ -20,6 +20,18 @@ Attackers cycle through thousands of IPs with 1-2 login attempts each. Per-IP ra
 
 **Auto-detection** — Recognizes login endpoints by path: `/login`, `/auth`, `/signin`, `/token`, `/authenticate`.
 
+## Independent Installation
+
+If you don't want the full `sentinai-spring-boot-starter`, you can include just this module:
+
+```xml
+<dependency>
+    <groupId>io.github.tapeshchavle</groupId>
+    <artifactId>sentinai-module-credential-guard</artifactId>
+    <version>1.0.0</version>
+</dependency>
+```
+
 ## Integration
 
 ### Minimal (zero config)

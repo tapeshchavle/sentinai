@@ -20,6 +20,18 @@ Your AI-powered app uses OpenAI/Kimi at $0.003 per call. A bot discovers your `/
 
 **Auto-detects AI endpoints** by path: `/chat`, `/summarize`, `/generate`, `/ai/`, `/completion`, `/predict`.
 
+## Independent Installation
+
+If you don't want the full `sentinai-spring-boot-starter`, you can include just this module:
+
+```xml
+<dependency>
+    <groupId>io.github.tapeshchavle</groupId>
+    <artifactId>sentinai-module-cost-protection</artifactId>
+    <version>1.0.0</version>
+</dependency>
+```
+
 ## Integration
 
 ### Minimal

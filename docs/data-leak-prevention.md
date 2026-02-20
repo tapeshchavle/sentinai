@@ -36,6 +36,18 @@ A developer forgets to exclude the `password_hash` field from a user serializati
 | Private Key (PEM) | `-----BEGIN PRIVATE KEY-----` | Header match |
 | Hex Secrets | 64-char hex in JSON values | Context-aware |
 
+## Independent Installation
+
+If you don't want the full `sentinai-spring-boot-starter`, you can include just this module:
+
+```xml
+<dependency>
+    <groupId>io.github.tapeshchavle</groupId>
+    <artifactId>sentinai-module-data-leak-prevention</artifactId>
+    <version>1.0.0</version>
+</dependency>
+```
+
 ## Integration
 
 ### Minimal
