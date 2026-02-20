@@ -81,7 +81,7 @@ graph TD
 
 | Layer | Speed to Evaluate | What It Does |
 |:---|:---|:---|
-| **Pattern Check** | ~0.1ms | Scans the query string and body for 8 patterns: SQL injection, XSS, NoSQL injection (`$where`), and massive wildcard abuse. |
+| **Pattern Check** | ~0.1ms | Scans the query string and body for 8 patterns: SQL injection, XSS, NoSQL injection (`$where`), and massive wildcard abuse. It automatically performs **URL-decoding** on query parameters to detect obfuscated attacks. |
 | **Circuit Breaker** | ~0ms | Tracks how long the Controller takes to return. If 5 consecutive requests take >3 seconds, it trips. It automatically tries admitting a request again after 30 seconds. |
 | **Concurrency Limiter**| ~0ms | Keeps an atomic counter of active requests per endpoint. Default max: 50 *simultaneous* connections per path. |
 
@@ -95,7 +95,7 @@ If you prefer a lightweight footprint and don't want the full `sentinai-spring-b
 <dependency>
     <groupId>io.github.tapeshchavle</groupId>
     <artifactId>sentinai-module-query-shield</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
 </dependency>
 ```
 

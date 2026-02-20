@@ -12,7 +12,6 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 /**
  * Detects brute force login attempts and credential stuffing.
@@ -27,7 +26,7 @@ public class CredentialGuardModule implements SecurityModule {
     private static final String ID = "credential-guard";
     private static final Duration DEFAULT_WINDOW = Duration.ofMinutes(5);
     private static final int DEFAULT_PER_USERNAME_THRESHOLD = 10;
-    private static final int DEFAULT_PER_FINGERPRINT_THRESHOLD = 20;
+    private static final int DEFAULT_PER_FINGERPRINT_THRESHOLD = 10;
     private static final int DEFAULT_GLOBAL_SPIKE_THRESHOLD = 500;
     private static final Duration DEFAULT_BLOCK_DURATION = Duration.ofMinutes(30);
 
@@ -80,46 +79,68 @@ public class CredentialGuardModule implements SecurityModule {
 
     @Override
     public List<ThreatVerdict> analyzeBatch(List<RequestEvent> events, ModuleContext context) {
-        // We only care about login failures here
-        List<RequestEvent> loginFailures = events.stream()
-                .filter(this::isLoginAttempt)
-                .filter(e -> isLoginFailure(e.getResponseStatus()))
-                .collect(Collectors.toList());
+        List<ThreatVerdict> verdicts = new java.util.ArrayList<>();
 
-        if (loginFailures.isEmpty()) {
-            return List.of();
+        log.info("[SentinAI] [credential-guard] Analyzing batch of {} events", events.size());
+
+        // Process each login failure
+        for (RequestEvent event : events) {
+            if (isLoginAttempt(event) && isLoginFailure(event.getResponseStatus())) {
+                String fingerprint = computeFingerprint(event);
+                String fpKey = "cg:fp:" + fingerprint;
+
+                // Increment counter for this specific fingerprint
+                long currentCount = context.getDecisionStore().incrementCounter(fpKey, DEFAULT_WINDOW);
+                log.info("[SentinAI] [credential-guard] Login failure for FP {}: count is now {}/{}",
+                        fingerprint, currentCount, getPerFingerprintThreshold(context));
+
+                if (currentCount >= getPerFingerprintThreshold(context)) {
+                    log.warn(
+                            "[SentinAI] [credential-guard] Credential stuffing detected for fingerprint '{}': {} attempts",
+                            fingerprint, currentCount);
+                    verdicts.add(ThreatVerdict.block(ID,
+                            "Credential stuffing: " + currentCount + " failed attempts",
+                            fpKey,
+                            DEFAULT_BLOCK_DURATION.toSeconds()));
+                }
+
+                // Increment counter for the target username
+                String username = extractUsername(event);
+                if (username != null && !username.isEmpty()) {
+                    String userKey = "cg:user:" + username;
+                    long userCount = context.getDecisionStore().incrementCounter(userKey, DEFAULT_WINDOW);
+                    log.info("[SentinAI] [credential-guard] Login failure for Username {}: count is now {}/{}",
+                            username, userCount, getPerUsernameThreshold(context));
+
+                    if (userCount >= getPerUsernameThreshold(context)) {
+                        log.warn(
+                                "[SentinAI] [credential-guard] Brute force detected for username '{}': {} attempts",
+                                username, userCount);
+                        verdicts.add(ThreatVerdict.block(ID,
+                                "Brute force attack: " + userCount + " failed attempts on user",
+                                userKey,
+                                DEFAULT_BLOCK_DURATION.toSeconds()));
+                    }
+                }
+            } else {
+                log.debug("[SentinAI] [credential-guard] Ignored event: Login Attempt={}, Status={}, Real Status={}",
+                        isLoginAttempt(event), isLoginFailure(event.getResponseStatus()), event.getResponseStatus());
+            }
         }
 
-        long globalFailures = context.getDecisionStore()
-                .getCounter("cg:global:failures");
+        long globalFailures = context.getDecisionStore().getCounter("cg:global:failures");
+        log.info("[SentinAI] [credential-guard] Global failures: {}/{}", globalFailures,
+                getGlobalSpikeThreshold(context));
+
         if (globalFailures > getGlobalSpikeThreshold(context)) {
             log.warn("[SentinAI] [credential-guard] Global login failure spike detected: {} failures",
                     globalFailures);
-            // Big spike in global login failures. Don't block the IP (might be a system
-            // issue), just log it.
-            return List.of(ThreatVerdict.suspicious(ID,
+            verdicts.add(ThreatVerdict.suspicious(ID,
                     "Global login failure spike: " + globalFailures + " failures in window",
                     "global"));
         }
 
-        // See if a specific target user has too many failed attempts
-        Map<String, Long> failuresByTarget = loginFailures.stream()
-                .filter(e -> e.getPath() != null)
-                .collect(Collectors.groupingBy(
-                        e -> e.getUserId() != null ? e.getUserId() : e.getSourceIp(),
-                        Collectors.counting()));
-
-        return failuresByTarget.entrySet().stream()
-                .filter(entry -> entry.getValue() >= getPerUsernameThreshold(context))
-                .map(entry -> {
-                    log.warn("[SentinAI] [credential-guard] Credential stuffing detected on target '{}': {} attempts",
-                            entry.getKey(), entry.getValue());
-                    return ThreatVerdict.block(ID,
-                            "Credential stuffing: " + entry.getValue() + " failed attempts on target",
-                            entry.getKey(),
-                            DEFAULT_BLOCK_DURATION.toSeconds());
-                })
-                .collect(Collectors.toList());
+        return verdicts;
     }
 
     private void recordFailure(ResponseEvent response, ModuleContext context) {
@@ -162,10 +183,42 @@ public class CredentialGuardModule implements SecurityModule {
         return Integer.toHexString((ua + "|" + acceptLang + "|" + accept).hashCode());
     }
 
+    private String extractUsername(RequestEvent event) {
+        // Simple extraction for the sake of the demo
+        if (event.getBody() != null && event.getBody().contains("\"username\"")) {
+            try {
+                // VERY basic JSON parsing just to grab the username value from the payload
+                String[] parts = event.getBody().split("\"username\"");
+                if (parts.length > 1) {
+                    String afterUsername = parts[1];
+                    int colonIdx = afterUsername.indexOf(':');
+                    if (colonIdx != -1) {
+                        String valuePart = afterUsername.substring(colonIdx + 1).trim();
+                        if (valuePart.startsWith("\"")) {
+                            int endQuoteIdx = valuePart.indexOf('"', 1);
+                            if (endQuoteIdx != -1) {
+                                return valuePart.substring(1, endQuoteIdx);
+                            }
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                // ignore parsing errors
+            }
+        }
+        return null;
+    }
+
     private int getPerUsernameThreshold(ModuleContext context) {
         Map<String, Object> config = context.getProperties().getModuleConfig(ID);
         Object val = config.get("per-username-failures");
         return val != null ? Integer.parseInt(val.toString()) : DEFAULT_PER_USERNAME_THRESHOLD;
+    }
+
+    private int getPerFingerprintThreshold(ModuleContext context) {
+        Map<String, Object> config = context.getProperties().getModuleConfig(ID);
+        Object val = config.get("per-fingerprint-failures");
+        return val != null ? Integer.parseInt(val.toString()) : DEFAULT_PER_FINGERPRINT_THRESHOLD;
     }
 
     private int getGlobalSpikeThreshold(ModuleContext context) {

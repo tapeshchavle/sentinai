@@ -17,7 +17,7 @@ Traditional rate limits (like 100 requests per minute) don't solve this. A user 
 ## 💡 The Solution: Cost Protection
 The Cost Protection module acts as a strict financial accountant for your AI endpoints. 
 
-It intercepts requests to anything that looks like an AI endpoint (e.g., `/chat`, `/generate`, `/summarize`) and keeps a running tally of estimated costs in your Redis cluster. It tracks both the explicit per-user spend and the global application spend. If a user hits their daily financial limit, they get cut off until midnight to stop the bleeding.
+It intercepts requests to anything that looks like an AI endpoint (e.g., `/chat`, `/generate`, `/summarize`) and keeps a running tally of estimated costs in your Redis cluster. It tracks both the explicit per-user spend and the global application spend. If a user hits their daily financial limit, they get cut off with a professional **429 Too Many Requests** status until midnight to stop the bleeding.
 
 ---
 
@@ -83,7 +83,7 @@ If you don't want the full `sentinai-spring-boot-starter`, you can include just 
 <dependency>
     <groupId>io.github.tapeshchavle</groupId>
     <artifactId>sentinai-module-cost-protection</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
 </dependency>
 ```
 
@@ -122,6 +122,6 @@ sentinai:
 | Scenario | How SentinAI Handles It |
 |:---|:---|
 | **Midnight Rollover** | Using Redis TTLs, the financial counters automatically expire and reset to $0 at midnight system time. |
-| **Unauthenticated / Anonymous Users** | If the request doesn't have a `userId` (e.g., a public demo), the module seamlessly falls back to tracking the budget against their IP address. |
+| **Unauthenticated / Anonymous Users** | If the request doesn't have a `userId` (e.g., a public demo), the module uses **enhanced identity resolution** (including Basic Auth decoding) to identify the user, or falls back to tracking against their IP address. |
 | **Viral Launch Day (Legitimate Spike)** | The 80% Early Warning alert fires first. If you monitor your logs, you'll see the alert and can raise the `daily-limit` via configuration before any real users are blocked at 100%. |
 | **Different AI Models** | Simply adjust the `cost-per-request` configuration to reflect your specific model's blended token costs. |

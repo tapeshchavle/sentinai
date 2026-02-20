@@ -30,7 +30,7 @@ public class SentinAIEngine {
     private final Executor asyncExecutor;
 
     private final List<RequestEvent> eventBuffer = new CopyOnWriteArrayList<>();
-    private static final int BATCH_SIZE = 20;
+    private static final int BATCH_SIZE = 10;
 
     public SentinAIEngine(ModuleRegistry registry, ModuleContext context,
             SentinAIProperties properties, Executor asyncExecutor) {
@@ -97,8 +97,6 @@ public class SentinAIEngine {
             }
         }
 
-        bufferEvent(event);
-
         return ThreatVerdict.safe("engine");
     }
 
@@ -125,10 +123,6 @@ public class SentinAIEngine {
         return current;
     }
 
-    /**
-     * Keep adding events to our queue until it's full enough to run a batch
-     * analysis.
-     */
     private void bufferEvent(RequestEvent event) {
         eventBuffer.add(event);
         if (eventBuffer.size() >= BATCH_SIZE) {
@@ -136,6 +130,14 @@ public class SentinAIEngine {
             eventBuffer.clear();
             asyncExecutor.execute(() -> runBatchAnalysis(batch));
         }
+    }
+
+    /**
+     * Submits a completed RequestEvent (with response metadata) for asynchronous
+     * batch analysis.
+     */
+    public void submitForAsyncAnalysis(RequestEvent completedEvent) {
+        bufferEvent(completedEvent);
     }
 
     /**

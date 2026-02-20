@@ -100,7 +100,7 @@ If you prefer a tight footprint and don't want the full `sentinai-spring-boot-st
 <dependency>
     <groupId>io.github.tapeshchavle</groupId>
     <artifactId>sentinai-module-bola-detection</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
 </dependency>
 ```
 
@@ -135,7 +135,7 @@ sentinai:
 | Scenario | How SentinAI Handles It |
 |:---|:---|
 | **Admins Accessing Many Records** | You can configure role exclusions so that users with the `ROLE_ADMIN` authority are bypassed and not tracked. |
-| **Unauthenticated (Public) Endpoints** | The BOLA module totally ignores unauthenticated requests. It only tracks users who have confirmed their identity via Spring Security. |
+| **Unauthenticated (Public) Endpoints** | The BOLA module totally ignores unauthenticated requests. It uses **enhanced identity resolution** (including Basic Auth decoding) to reliably track users across all protected endpoints. |
 | **UUIDs vs Numeric IDs** | Sequential checking only runs if the IDs are numeric. But the *Unique ID Tracking* works perfectly on both numeric IDs and raw UUIDs, stopping scattershot data scrapers. |
 | **Pagination (/api/orders?page=1)** | BOLA tracks path variables (the actual resource ID), it entirely ignores pagination parameters in the query string. |
 | **Shared Resources (e.g., a Team Dashboard)** | Tracking is threshold-based. If a user normally views 5 shared documents a day, they won't trigger the 15-ID threshold. |

@@ -6,7 +6,7 @@
     <parent>
         <groupId>io.github.tapeshchavle</groupId>
         <artifactId>sentinai-parent</artifactId>
-        <version>1.0.0</version>
+        <version>1.1.0</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
     <artifactId>sentinai-module-bola-detection</artifactId>
