@@ -15,19 +15,9 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * Credential Guard Module — Detects slow-burn credential stuffing and
- * brute-force attacks.
- *
- * <p>
- * Detection strategy:
- * </p>
- * <ul>
- * <li>Tracks failed login attempts per TARGET USERNAME (not per IP)</li>
- * <li>Tracks failed logins per client FINGERPRINT (User-Agent + headers
- * hash)</li>
- * <li>Monitors global failure rate spikes</li>
- * <li>Sends suspicious patterns to AI for batch analysis</li>
- * </ul>
+ * Detects brute force login attempts and credential stuffing.
+ * Returns a 403 response if the login target or the client fingerprint attempts
+ * too many failed logins within a rolling time window.
  */
 @Component
 public class CredentialGuardModule implements SecurityModule {
@@ -58,12 +48,12 @@ public class CredentialGuardModule implements SecurityModule {
 
     @Override
     public ThreatVerdict analyzeRequest(RequestEvent event, ModuleContext context) {
-        // Only analyze POST requests to login-like endpoints
+        // We only care about POST requests pushing credentials to a login route
         if (!isLoginAttempt(event)) {
             return ThreatVerdict.safe(ID);
         }
 
-        // Check if the source IP or fingerprint is already blocked
+        // Does this client fingerprint have a history of stuffing?
         String fingerprint = computeFingerprint(event);
         if (context.getDecisionStore().isBlocked("cg:fp:" + fingerprint)) {
             return ThreatVerdict.block(ID,
@@ -76,7 +66,7 @@ public class CredentialGuardModule implements SecurityModule {
 
     @Override
     public ResponseEvent analyzeResponse(ResponseEvent response, ModuleContext context) {
-        // After the login response, check if it was a failure
+        // Only check the response status for login routes
         if (!isLoginPath(response.getPath())) {
             return response;
         }
@@ -90,7 +80,7 @@ public class CredentialGuardModule implements SecurityModule {
 
     @Override
     public List<ThreatVerdict> analyzeBatch(List<RequestEvent> events, ModuleContext context) {
-        // Filter to only login failures
+        // We only care about login failures here
         List<RequestEvent> loginFailures = events.stream()
                 .filter(this::isLoginAttempt)
                 .filter(e -> isLoginFailure(e.getResponseStatus()))
@@ -100,20 +90,19 @@ public class CredentialGuardModule implements SecurityModule {
             return List.of();
         }
 
-        // --- Check 1: Global failure spike ---
         long globalFailures = context.getDecisionStore()
                 .getCounter("cg:global:failures");
         if (globalFailures > getGlobalSpikeThreshold(context)) {
             log.warn("[SentinAI] [credential-guard] Global login failure spike detected: {} failures",
                     globalFailures);
-            // Don't block — alert. Could be a system issue.
+            // Big spike in global login failures. Don't block the IP (might be a system
+            // issue), just log it.
             return List.of(ThreatVerdict.suspicious(ID,
                     "Global login failure spike: " + globalFailures + " failures in window",
                     "global"));
         }
 
-        // --- Check 2: Per-username analysis ---
-        // Group failures by target username (extracted from path or body)
+        // See if a specific target user has too many failed attempts
         Map<String, Long> failuresByTarget = loginFailures.stream()
                 .filter(e -> e.getPath() != null)
                 .collect(Collectors.groupingBy(
@@ -132,8 +121,6 @@ public class CredentialGuardModule implements SecurityModule {
                 })
                 .collect(Collectors.toList());
     }
-
-    // --- Private helpers ---
 
     private void recordFailure(ResponseEvent response, ModuleContext context) {
         // Increment per-path failure counter
@@ -167,7 +154,8 @@ public class CredentialGuardModule implements SecurityModule {
     }
 
     private String computeFingerprint(RequestEvent event) {
-        // Combine User-Agent + Accept-Language + other headers for fingerprinting
+        // Hash a combination of the user agent and some headers to reliably identify
+        // the client across IPs
         String ua = event.getUserAgent() != null ? event.getUserAgent() : "";
         String acceptLang = event.getHeaders().getOrDefault("accept-language", "");
         String accept = event.getHeaders().getOrDefault("accept", "");

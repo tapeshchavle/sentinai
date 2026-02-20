@@ -16,9 +16,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
 
 /**
- * The central orchestrator for SentinAI.
- * Coordinates all SecurityModules in the correct order for request/response
- * analysis.
+ * The brain of SentinAI.
+ * This class runs all of our active SecurityModules against every request and
+ * response.
  */
 public class SentinAIEngine {
 
@@ -29,7 +29,6 @@ public class SentinAIEngine {
     private final SentinAIProperties properties;
     private final Executor asyncExecutor;
 
-    // Buffer for collecting events for async batch analysis
     private final List<RequestEvent> eventBuffer = new CopyOnWriteArrayList<>();
     private static final int BATCH_SIZE = 20;
 
@@ -43,22 +42,21 @@ public class SentinAIEngine {
     }
 
     /**
-     * Process an incoming request through all enabled inbound modules.
-     * Called synchronously by the Security Filter — must be FAST.
+     * Run an incoming request through our active inbound modules.
+     * This is called synchronously on every request, so it needs to be fast.
      *
-     * @return The first blocking verdict, or a SAFE verdict if all pass.
+     * @return The first blocking verdict we find, or a safe verdict if it passes
+     *         everything.
      */
     public ThreatVerdict processRequest(RequestEvent event) {
         if (!properties.isEnabled()) {
             return ThreatVerdict.safe("engine");
         }
 
-        // Check if path is excluded
         if (isExcludedPath(event.getPath())) {
             return ThreatVerdict.safe("engine");
         }
 
-        // Check blacklist first (fastest check)
         if (context.getDecisionStore().isBlocked(event.getSourceIp())) {
             return ThreatVerdict.block("engine", "IP is blacklisted",
                     event.getSourceIp(), 0);
@@ -69,7 +67,6 @@ public class SentinAIEngine {
                     event.getUserId(), 0);
         }
 
-        // Run through all enabled modules
         for (SecurityModule module : registry.getEnabledModules(context)) {
             try {
                 ThreatVerdict verdict = module.analyzeRequest(event, context);
@@ -78,7 +75,6 @@ public class SentinAIEngine {
                     if (properties.isActiveMode()) {
                         log.warn("[SentinAI] [{}] BLOCKED: {} — {}",
                                 module.getId(), event, verdict.getReason());
-                        // Store the block decision
                         if (verdict.shouldBlock()) {
                             context.getDecisionStore().block(
                                     verdict.getTargetIdentifier(),
@@ -89,7 +85,7 @@ public class SentinAIEngine {
                         }
                         return verdict;
                     } else {
-                        // MONITOR mode — log but don't block
+                        // We're just monitoring, so don't actually block the request, just log it
                         log.warn("[SentinAI] [{}] WOULD HAVE BLOCKED: {} — {}",
                                 module.getId(), event, verdict.getReason());
                     }
@@ -97,21 +93,20 @@ public class SentinAIEngine {
             } catch (Exception e) {
                 log.error("[SentinAI] Module '{}' threw exception: {}",
                         module.getId(), e.getMessage());
-                // Module failure should never crash the app
+                // Even if a module throws an exception, we shouldn't bring down the main app
             }
         }
 
-        // Buffer event for async batch analysis
         bufferEvent(event);
 
         return ThreatVerdict.safe("engine");
     }
 
     /**
-     * Process an outgoing response through all enabled outbound modules.
-     * Used for Data Leak Prevention, Cost Protection, etc.
+     * Run an outgoing response through our active outbound modules.
+     * This is how we handle Data Leak Prevention and Cost Protection.
      *
-     * @return The (potentially modified) response.
+     * @return The response, which might be modified (e.g., redacted).
      */
     public ResponseEvent processResponse(ResponseEvent response) {
         if (!properties.isEnabled()) {
@@ -131,7 +126,8 @@ public class SentinAIEngine {
     }
 
     /**
-     * Buffer events and trigger batch analysis when buffer is full.
+     * Keep adding events to our queue until it's full enough to run a batch
+     * analysis.
      */
     private void bufferEvent(RequestEvent event) {
         eventBuffer.add(event);
@@ -143,8 +139,8 @@ public class SentinAIEngine {
     }
 
     /**
-     * Run async batch analysis across all modules.
-     * This is where AI calls happen — it can take seconds.
+     * Run batch analysis across all modules in a background thread.
+     * We do this because AI calls can take several seconds to complete.
      */
     private void runBatchAnalysis(List<RequestEvent> batch) {
         for (SecurityModule module : registry.getEnabledModules(context)) {
@@ -173,7 +169,7 @@ public class SentinAIEngine {
     }
 
     /**
-     * Check if a path matches any exclusion pattern.
+     * See if the requested path matches any of our configured exclude patterns.
      */
     private boolean isExcludedPath(String path) {
         for (String pattern : properties.getExcludePaths()) {
@@ -188,7 +184,7 @@ public class SentinAIEngine {
         return false;
     }
 
-    /** Force flush the event buffer (for testing). */
+    /** Flush any pending events in the buffer. Mostly useful for testing. */
     public void flushEventBuffer() {
         if (!eventBuffer.isEmpty()) {
             List<RequestEvent> batch = new ArrayList<>(eventBuffer);

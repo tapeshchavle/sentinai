@@ -3,16 +3,16 @@ package com.sentinai.core.model;
 import java.time.Instant;
 
 /**
- * The AI's decision about a request or batch of requests.
+ * Represents a final security decision made by one of our modules.
  */
 public class ThreatVerdict {
 
     private final ThreatLevel level;
     private final String reason;
-    private final String moduleId; // Which module produced this verdict
+    private final String moduleId; // Who made this decision?
     private final Action recommendedAction;
-    private final String targetIdentifier; // What to block (IP, userId, fingerprint)
-    private final long blockDurationSeconds; // How long to block (0 = permanent)
+    private final String targetIdentifier; // The specific thing we want to block (an IP, a user, etc.)
+    private final long blockDurationSeconds; // How long the block should last in seconds (0 means forever)
     private final Instant timestamp;
 
     public enum Action {
@@ -33,8 +33,6 @@ public class ThreatVerdict {
         this.blockDurationSeconds = blockDurationSeconds;
         this.timestamp = Instant.now();
     }
-
-    // --- Factory methods for easy creation ---
 
     public static ThreatVerdict safe(String moduleId) {
         return new ThreatVerdict(ThreatLevel.SAFE, "No threat detected", moduleId,
@@ -61,7 +59,6 @@ public class ThreatVerdict {
                 Action.THROTTLE, target, 0);
     }
 
-    // --- Getters ---
     public ThreatLevel getLevel() {
         return level;
     }

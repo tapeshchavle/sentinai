@@ -1,7 +1,6 @@
 package com.sentinai.module.costprotection;
 
 import com.sentinai.core.model.RequestEvent;
-import com.sentinai.core.model.ResponseEvent;
 import com.sentinai.core.model.ThreatVerdict;
 import com.sentinai.core.plugin.ModuleContext;
 import com.sentinai.core.plugin.SecurityModule;
@@ -15,16 +14,12 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Cost Protection Module — Prevents AI API bill shock.
+ * Prevents AI API bill shock.
  *
- * <p>
- * Tracks:
- * </p>
- * <ul>
- * <li>Global daily spend (estimated from token count)</li>
- * <li>Per-user request count</li>
- * <li>Budget alerts at configurable thresholds</li>
- * </ul>
+ * Keeps track of:
+ * 1. Global daily spend (estimated based on tokens)
+ * 2. How many requests each individual user has made
+ * 3. Alerting admins when we're getting close to our budget limits
  */
 @Component
 public class CostProtectionModule implements SecurityModule {
@@ -65,19 +60,18 @@ public class CostProtectionModule implements SecurityModule {
 
     @Override
     public ThreatVerdict analyzeRequest(RequestEvent event, ModuleContext context) {
-        // Only track endpoints that likely call AI services
+        // Only bother tracking requests that actually call our AI endpoints
         if (!isAiEndpoint(event)) {
             return ThreatVerdict.safe(ID);
         }
 
-        // Reset daily counter if day changed
+        // Start over if it's a new day
         resetIfNewDay();
 
         double dailyLimit = getDailyLimit(context);
         double costPerRequest = getCostPerRequest(context);
         double estimatedSpend = dailyRequestCount.get() * costPerRequest;
 
-        // --- Check 1: Global daily budget ---
         if (estimatedSpend >= dailyLimit) {
             log.warn("[SentinAI] [cost-protection] Daily budget EXCEEDED: ${}/{} — blocking AI requests",
                     String.format("%.2f", estimatedSpend), String.format("%.0f", dailyLimit));
@@ -87,7 +81,6 @@ public class CostProtectionModule implements SecurityModule {
                     event.getSourceIp());
         }
 
-        // --- Check 2: Alert threshold ---
         double alertThreshold = getAlertThreshold(context);
         if (estimatedSpend >= dailyLimit * alertThreshold) {
             log.warn("[SentinAI] [cost-protection] Budget alert: ${}/{} ({}%)",
@@ -96,7 +89,6 @@ public class CostProtectionModule implements SecurityModule {
                     String.format("%.0f", (estimatedSpend / dailyLimit) * 100));
         }
 
-        // --- Check 3: Per-user limit ---
         if (event.getUserId() != null) {
             int perUserLimit = getPerUserLimit(context);
             long userCount = context.getDecisionStore()
@@ -110,12 +102,10 @@ public class CostProtectionModule implements SecurityModule {
             }
         }
 
-        // Track request
+        // Add one more to the daily total
         dailyRequestCount.incrementAndGet();
         return ThreatVerdict.safe(ID);
     }
-
-    // --- Helpers ---
 
     private boolean isAiEndpoint(RequestEvent event) {
         String path = event.getPath().toLowerCase();

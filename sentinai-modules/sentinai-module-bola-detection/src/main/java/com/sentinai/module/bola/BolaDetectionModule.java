@@ -15,16 +15,13 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
- * BOLA Detection Module — Detects Broken Object Level Authorization attacks.
+ * Detects Broken Object Level Authorization (BOLA) attacks.
  *
- * <p>
- * Detects when a user accesses resources they shouldn't own by:
- * </p>
- * <ul>
- * <li>Tracking which resource IDs each user typically accesses</li>
- * <li>Flagging rapid sequential ID enumeration (1, 2, 3, 4...)</li>
- * <li>Detecting single-session access to abnormally many unique IDs</li>
- * </ul>
+ * We spot when a user tries to access resources they don't own by:
+ * 1. Keeping an eye on which resource IDs each user normally accesses
+ * 2. Catching people rapidly enumerating IDs (like trying /api/users/1, then 2,
+ * then 3...)
+ * 3. Flagging sessions that suddenly touch way too many unique IDs
  */
 @Component
 public class BolaDetectionModule implements SecurityModule {
@@ -64,12 +61,12 @@ public class BolaDetectionModule implements SecurityModule {
 
     @Override
     public ThreatVerdict analyzeRequest(RequestEvent event, ModuleContext context) {
-        // Only analyze authenticated requests
+        // Unauthenticated folks can't do BOLA, so ignore them
         if (event.getUserId() == null) {
             return ThreatVerdict.safe(ID);
         }
 
-        // Extract resource ID from path
+        // Pull the ID out of the URL path
         String resourceId = extractResourceId(event.getPath());
         if (resourceId == null) {
             return ThreatVerdict.safe(ID);
@@ -78,7 +75,6 @@ public class BolaDetectionModule implements SecurityModule {
         String userKey = "bola:user:" + event.getUserId();
         String idsKey = userKey + ":ids";
 
-        // --- Check 1: Is this user blocked? ---
         if (context.getDecisionStore().isBlocked(userKey)) {
             return ThreatVerdict.block(ID,
                     "User blocked for BOLA attack",
@@ -86,11 +82,10 @@ public class BolaDetectionModule implements SecurityModule {
                     Duration.ofMinutes(60).toSeconds());
         }
 
-        // --- Check 2: Track unique IDs accessed ---
-        long uniqueCount = context.getDecisionStore()
+        context.getDecisionStore()
                 .incrementCounter(idsKey + ":" + resourceId, TRACKING_WINDOW);
 
-        // Get total unique IDs
+        // See how many unique IDs they've accessed total
         long totalUniqueAccesses = context.getDecisionStore()
                 .incrementCounter(idsKey + ":total", TRACKING_WINDOW);
 
@@ -105,7 +100,6 @@ public class BolaDetectionModule implements SecurityModule {
                     Duration.ofMinutes(30).toSeconds());
         }
 
-        // --- Check 3: Sequential ID detection ---
         if (isNumericId(resourceId)) {
             long seqCount = trackSequentialAccess(event.getUserId(), Long.parseLong(resourceId), context);
             int seqThreshold = getSequentialThreshold(context);
@@ -124,7 +118,8 @@ public class BolaDetectionModule implements SecurityModule {
 
     @Override
     public List<ThreatVerdict> analyzeBatch(List<RequestEvent> events, ModuleContext context) {
-        // Group events by user and look for suspicious patterns
+        // Group these events by user so we can spot suspicious patterns looking across
+        // the whole batch
         Map<String, List<RequestEvent>> byUser = events.stream()
                 .filter(e -> e.getUserId() != null)
                 .filter(e -> extractResourceId(e.getPath()) != null)
@@ -136,7 +131,7 @@ public class BolaDetectionModule implements SecurityModule {
             String userId = entry.getKey();
             List<RequestEvent> userEvents = entry.getValue();
 
-            // Count unique resource IDs in this batch
+            // How many distinct resource IDs did they hit?
             long uniqueIds = userEvents.stream()
                     .map(e -> extractResourceId(e.getPath()))
                     .distinct()
@@ -151,8 +146,6 @@ public class BolaDetectionModule implements SecurityModule {
 
         return verdicts;
     }
-
-    // --- Helpers ---
 
     private String extractResourceId(String path) {
         if (path == null)
@@ -183,12 +176,12 @@ public class BolaDetectionModule implements SecurityModule {
         long lastId = lastIdStr != null ? Long.parseLong(lastIdStr) : -1;
 
         if (currentId == lastId + 1 || currentId == lastId - 1) {
-            // Sequential! Increment counter
+            // Found a sequence! Bump the counter
             long count = context.getDecisionStore().incrementCounter(seqCountKey, TRACKING_WINDOW);
             context.getDecisionStore().put(lastIdKey, String.valueOf(currentId), TRACKING_WINDOW);
             return count;
         } else {
-            // Not sequential — reset
+            // Break in the sequence, reset our counter
             context.getDecisionStore().put(lastIdKey, String.valueOf(currentId), TRACKING_WINDOW);
             context.getDecisionStore().put(seqCountKey, "0", TRACKING_WINDOW);
             return 0;

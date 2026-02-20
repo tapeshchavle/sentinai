@@ -17,12 +17,12 @@ public class RequestEvent {
     private final String body;
     private final String sourceIp;
     private final String userAgent;
-    private final String userId; // Extracted from JWT/Session (null if unauthenticated)
+    private final String userId; // Grabbed from the user's session or JWT; null if they aren't logged in
     private final String sessionId;
     private final String fingerprint; // JA3 or computed fingerprint
     private final Instant timestamp;
-    private final int responseStatus; // 0 if not yet known (pre-filter)
-    private final long responseTimeMs; // 0 if not yet known
+    private final int responseStatus; // Defaults to 0 before the response is actually sent
+    private final long responseTimeMs; // How long the request took in ms; 0 if it's still running
 
     private RequestEvent(Builder builder) {
         this.requestId = builder.requestId;
@@ -41,7 +41,6 @@ public class RequestEvent {
         this.responseTimeMs = builder.responseTimeMs;
     }
 
-    // Getters
     public String getRequestId() {
         return requestId;
     }

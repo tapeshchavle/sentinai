@@ -35,24 +35,20 @@ public class ModuleRegistry {
                         .collect(Collectors.joining(", ")));
     }
 
-    /** Get all modules in execution order. */
     public List<SecurityModule> getModules() {
         return modules;
     }
 
-    /** Get a specific module by ID. */
     public SecurityModule getModule(String id) {
         return moduleMap.get(id);
     }
 
-    /** Get only enabled modules. */
     public List<SecurityModule> getEnabledModules(ModuleContext context) {
         return modules.stream()
                 .filter(m -> m.isEnabled(context))
                 .collect(Collectors.toList());
     }
 
-    /** Check if a module is registered. */
     public boolean hasModule(String id) {
         return moduleMap.containsKey(id);
     }

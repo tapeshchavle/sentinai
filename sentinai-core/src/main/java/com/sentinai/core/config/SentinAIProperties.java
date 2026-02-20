@@ -5,8 +5,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Configuration properties for SentinAI.
- * Bound to the {@code sentinai.*} namespace in application.yml.
+ * Core configuration properties for SentinAI.
+ * These map directly to the `sentinai.*` properties in your application.yml.
  */
 public class SentinAIProperties {
 
@@ -18,7 +18,6 @@ public class SentinAIProperties {
     private StoreProperties store = new StoreProperties();
     private Map<String, ModuleProperties> modules = new HashMap<>();
 
-    // --- Top level ---
     public boolean isEnabled() {
         return enabled;
     }
@@ -51,7 +50,6 @@ public class SentinAIProperties {
         this.excludePaths = excludePaths;
     }
 
-    // --- AI ---
     public AiProperties getAi() {
         return ai;
     }
@@ -60,7 +58,6 @@ public class SentinAIProperties {
         this.ai = ai;
     }
 
-    // --- Store ---
     public StoreProperties getStore() {
         return store;
     }
@@ -69,7 +66,6 @@ public class SentinAIProperties {
         this.store = store;
     }
 
-    // --- Modules ---
     public Map<String, ModuleProperties> getModules() {
         return modules;
     }
@@ -79,18 +75,18 @@ public class SentinAIProperties {
     }
 
     /**
-     * Check if a specific module is enabled.
-     * Default: true for all modules unless explicitly disabled.
+     * Useful for checking if a specific module is turned on.
+     * Note: modules are enabled by default unless explicitly disabled.
      */
     public boolean isModuleEnabled(String moduleId) {
         ModuleProperties props = modules.get(moduleId);
         if (props == null)
-            return true; // Enabled by default
+            return true; // Modules are enabled by default if not explicitly turned off
         return props.isEnabled();
     }
 
     /**
-     * Get module-specific properties.
+     * Grab any custom settings specific to a module.
      */
     public Map<String, Object> getModuleConfig(String moduleId) {
         ModuleProperties props = modules.get(moduleId);
@@ -98,8 +94,6 @@ public class SentinAIProperties {
             return Map.of();
         return props.getConfig();
     }
-
-    // --- Nested classes ---
 
     public static class AiProperties {
         private String provider = "openai";

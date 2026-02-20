@@ -16,19 +16,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 
 /**
- * Query Shield Module — Protects against application-layer DDoS via expensive
- * queries.
+ * Blocks application-layer DDoS attacks caused by expensive queries.
  *
- * <p>
- * Three layers of defense:
- * </p>
- * <ol>
- * <li>Pattern Check: Instantly blocks known-dangerous payloads (SQL wildcards,
- * injections)</li>
- * <li>Concurrency Limiter: Limits simultaneous requests per endpoint</li>
- * <li>Circuit Breaker: Temporarily stops forwarding if endpoint latency
- * spikes</li>
- * </ol>
+ * We do this in three ways:
+ * 1. Instantly blocking known malicious payloads (like SQL injection or
+ * wildcards)
+ * 2. Capping the number of simultaneous requests for a single endpoint
+ * 3. Tripping a circuit breaker if an endpoint starts responding too slowly
  */
 @Component
 public class QueryShieldModule implements SecurityModule {
@@ -36,30 +30,28 @@ public class QueryShieldModule implements SecurityModule {
     private static final Logger log = LoggerFactory.getLogger(QueryShieldModule.class);
     private static final String ID = "query-shield";
 
-    // Known dangerous patterns — instant block
+    // Block these immediately - they're definitely malicious
     private static final List<Pattern> DANGEROUS_PATTERNS = List.of(
-            Pattern.compile("(?i)['\"]\\s*(OR|AND)\\s+['\"]?\\d"), // SQL injection: ' OR '1
-            Pattern.compile("(?i)\\bSLEEP\\s*\\("), // SQL time-based injection
-            Pattern.compile("(?i)\\bUNION\\s+SELECT\\b"), // SQL UNION injection
-            Pattern.compile("(?i)\\$where\\b"), // NoSQL injection
-            Pattern.compile("(?i)\\bDROP\\s+TABLE\\b"), // SQL DDL injection
-            Pattern.compile("(?i)<script[^>]*>"), // XSS
-            Pattern.compile("(?i)javascript\\s*:"), // XSS via protocol
-            Pattern.compile("(?i)\\beval\\s*\\(") // Code injection
-    );
+            Pattern.compile("(?i)['\"]\\s*(OR|AND)\\s+['\"]?\\d"),
+            Pattern.compile("(?i)\\bSLEEP\\s*\\("),
+            Pattern.compile("(?i)\\bUNION\\s+SELECT\\b"),
+            Pattern.compile("(?i)\\$where\\b"),
+            Pattern.compile("(?i)\\bDROP\\s+TABLE\\b"),
+            Pattern.compile("(?i)<script[^>]*>"),
+            Pattern.compile("(?i)javascript\\s*:"),
+            Pattern.compile("(?i)\\beval\\s*\\("));
 
-    // Wildcard abuse patterns — flag for analysis
+    // Flag these for review - returning too much data can crash the DB
     private static final List<Pattern> WILDCARD_PATTERNS = List.of(
-            Pattern.compile("^%+$"), // Pure wildcard: %
-            Pattern.compile("^_+$"), // Pure underscore wildcard: ___
-            Pattern.compile("(?i)\\bLIKE\\s+'%") // LIKE '%...'
-    );
+            Pattern.compile("^%+$"),
+            Pattern.compile("^_+$"),
+            Pattern.compile("(?i)\\bLIKE\\s+'%"));
 
-    // Concurrency tracking per endpoint
+    // Keep track of how many requests are hitting each endpoint right now
     private final Map<String, AtomicInteger> activeConcurrency = new ConcurrentHashMap<>();
     private static final int DEFAULT_MAX_CONCURRENCY = 50;
 
-    // Circuit breaker state
+    // Keep track of endpoints that are failing/timing out
     private final Map<String, CircuitState> circuitStates = new ConcurrentHashMap<>();
 
     @Override
@@ -82,7 +74,6 @@ public class QueryShieldModule implements SecurityModule {
 
         String fullQuery = buildFullQuery(event);
 
-        // --- Layer 1: Pattern Check (instant) ---
         for (Pattern p : DANGEROUS_PATTERNS) {
             if (p.matcher(fullQuery).find()) {
                 log.warn("[SentinAI] [query-shield] Dangerous pattern detected: {} in {}",
@@ -94,11 +85,10 @@ public class QueryShieldModule implements SecurityModule {
             }
         }
 
-        // Check wildcard abuse
+        // Check for wildcard abuse in the query params
         String queryParam = event.getQueryString();
         if (queryParam != null) {
             for (Pattern p : WILDCARD_PATTERNS) {
-                // Check each query parameter value
                 for (String part : queryParam.split("&")) {
                     String[] kv = part.split("=", 2);
                     if (kv.length == 2 && p.matcher(kv[1]).find()) {
@@ -111,7 +101,6 @@ public class QueryShieldModule implements SecurityModule {
             }
         }
 
-        // --- Layer 2: Circuit Breaker Check ---
         CircuitState circuit = circuitStates.get(event.getPath());
         if (circuit != null && circuit.isOpen()) {
             return ThreatVerdict.throttle(ID,
@@ -119,7 +108,6 @@ public class QueryShieldModule implements SecurityModule {
                     event.getSourceIp());
         }
 
-        // --- Layer 3: Concurrency Limiter ---
         AtomicInteger active = activeConcurrency.computeIfAbsent(
                 event.getPath(), k -> new AtomicInteger(0));
         int currentActive = active.incrementAndGet();
@@ -138,14 +126,15 @@ public class QueryShieldModule implements SecurityModule {
 
     @Override
     public ResponseEvent analyzeResponse(ResponseEvent response, ModuleContext context) {
-        // Decrement concurrency counter
+        // Let go of the concurrency lock once the response is done
         AtomicInteger active = activeConcurrency.get(response.getPath());
         if (active != null) {
             active.decrementAndGet();
         }
 
-        // Track response time for circuit breaker
-        if (response.getResponseTimeMs() > 3000) { // > 3 seconds = slow
+        // If the request took longer than 3 seconds, record it so we can trip the
+        // breaker if needed
+        if (response.getResponseTimeMs() > 3000) {
             CircuitState circuit = circuitStates.computeIfAbsent(
                     response.getPath(), k -> new CircuitState());
             circuit.recordFailure();
@@ -156,7 +145,7 @@ public class QueryShieldModule implements SecurityModule {
                         response.getPath(), circuit.failureCount);
             }
         } else {
-            // Successful fast response — reset circuit
+            // Speed looks good here, resolve any ongoing circuit breaker issues
             CircuitState circuit = circuitStates.get(response.getPath());
             if (circuit != null) {
                 circuit.recordSuccess();
@@ -175,7 +164,6 @@ public class QueryShieldModule implements SecurityModule {
         return sb.toString();
     }
 
-    // --- Circuit Breaker State ---
     private static class CircuitState {
         int failureCount = 0;
         boolean open = false;
@@ -205,7 +193,7 @@ public class QueryShieldModule implements SecurityModule {
         boolean isOpen() {
             if (!open)
                 return false;
-            // Auto-close after recovery timeout (half-open)
+            // Give the endpoint another try after 30 seconds
             if (System.currentTimeMillis() - openedAt > RECOVERY_MS) {
                 open = false;
                 failureCount = 0;

@@ -1,7 +1,8 @@
 package com.sentinai.core.model;
 
 /**
- * Wraps an API response body for outbound scanning (Data Leak Prevention).
+ * A simple wrapper around the API response so our outbound modules (like DLP)
+ * can inspect it.
  */
 public class ResponseEvent {
 

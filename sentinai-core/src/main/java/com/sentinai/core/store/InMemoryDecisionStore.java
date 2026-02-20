@@ -90,8 +90,6 @@ public class InMemoryDecisionStore implements DecisionStore {
                 .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().reason));
     }
 
-    // --- Internal classes ---
-
     private static class BlockEntry {
         final String reason;
         final Instant expiry;

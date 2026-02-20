@@ -1,7 +1,6 @@
 package com.sentinai.core.ai;
 
 import com.sentinai.core.model.RequestEvent;
-import com.sentinai.core.model.ThreatLevel;
 import com.sentinai.core.model.ThreatVerdict;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

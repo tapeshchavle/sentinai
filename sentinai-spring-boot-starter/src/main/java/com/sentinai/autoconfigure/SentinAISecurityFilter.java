@@ -23,9 +23,9 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * The Spring Security filter that integrates SentinAI into the filter chain.
- * Designed to NEVER crash the host application — all errors are caught and
- * logged.
+ * Hooks SentinAI right into the Spring Security filter chain.
+ * We're very careful here not to crash the host app — all errors are safely
+ * caught and logged.
  */
 public class SentinAISecurityFilter extends OncePerRequestFilter {
 
@@ -51,7 +51,6 @@ public class SentinAISecurityFilter extends OncePerRequestFilter {
 
         String requestId = UUID.randomUUID().toString().substring(0, 8);
 
-        // --- Step 1: Inbound analysis (synchronous, fast) ---
         try {
             RequestEvent event = buildRequestEvent(request, requestId);
             ThreatVerdict verdict = engine.processRequest(event);
@@ -68,18 +67,17 @@ public class SentinAISecurityFilter extends OncePerRequestFilter {
             log.error("[SentinAI] Inbound analysis error (request not blocked): {}", e.getMessage());
         }
 
-        // --- Step 2: Forward to controller with response capture ---
         ContentCachingResponseWrapper wrappedResponse = new ContentCachingResponseWrapper(response);
 
         try {
             filterChain.doFilter(request, wrappedResponse);
         } catch (Exception e) {
-            // If the controller throws, let it propagate after copying the cached body
+            // Forward any exceptions from the controller, but make sure to flush our
+            // response buffer first
             wrappedResponse.copyBodyToResponse();
             throw e;
         }
 
-        // --- Step 3: Outbound analysis (Data Leak Prevention) ---
         try {
             byte[] content = wrappedResponse.getContentAsByteArray();
             if (content.length > 0 && isJsonResponse(wrappedResponse)) {
@@ -122,7 +120,7 @@ public class SentinAISecurityFilter extends OncePerRequestFilter {
                 userId = auth.getName();
             }
         } catch (Exception e) {
-            // Security context not available
+            // Could not extract security context, they are likely not logged in
         }
 
         String sourceIp = request.getHeader("X-Forwarded-For");

@@ -16,21 +16,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Data Leak Prevention Module — Scans outgoing API responses for sensitive
- * data.
- *
- * <p>
- * Detects and redacts:
- * </p>
- * <ul>
- * <li>Credit card numbers (Luhn validation)</li>
- * <li>SSN (US format)</li>
- * <li>Aadhaar numbers (India)</li>
- * <li>Password hashes (bcrypt, argon2, SHA-256)</li>
- * <li>API keys (OpenAI, AWS, GitHub, etc.)</li>
- * <li>JWT tokens</li>
- * <li>Private keys (PEM format)</li>
- * </ul>
+ * Scans outgoing API responses and redacts sensitive data before it hits the
+ * client.
+ * Handles credit cards, SSNs, Aadhaar, password hashes, API keys, and JWTs.
  */
 @Component
 public class DataLeakPreventionModule implements SecurityModule {
@@ -39,18 +27,16 @@ public class DataLeakPreventionModule implements SecurityModule {
     private static final String ID = "data-leak-prevention";
     private static final String REDACTED = "[REDACTED BY SENTINAI]";
 
-    /**
-     * Auth endpoints where JWT tokens are intentionally returned.
-     * DLP will NOT redact JWT tokens on these paths so frontends can use them.
-     */
+    // We obviously need to return JWTs when the user logs in, so ignore these
+    // endpoints.
     private static final Set<String> AUTH_PATHS = Set.of(
             "/api/login", "/api/auth", "/api/token", "/api/register",
             "/api/refresh", "/api/oauth", "/login", "/auth", "/token",
             "/oauth/token", "/api/auth/login", "/api/auth/register");
 
-    /**
-     * Each detector has a name, regex pattern, and optional validator.
-     */
+    // Setup our regex patterns for anything we don't want leaked.
+    // Some of these (like CCs) also have an extra validator function to reduce
+    // false positives.
     private static final List<SensitiveDataDetector> DETECTORS = List.of(
             // Credit Cards (13-19 digits, with optional separators)
             new SensitiveDataDetector("credit-card",
@@ -110,18 +96,18 @@ public class DataLeakPreventionModule implements SecurityModule {
 
     @Override
     public int getOrder() {
-        return 800;
-    } // Runs on response path, late in chain
+        return 800; // Need this to run late in the chain on the way out
+    }
 
     @Override
     public ThreatVerdict analyzeRequest(RequestEvent event, ModuleContext context) {
-        // DLP only analyzes responses, not requests
+        // We only care about responses here
         return ThreatVerdict.safe(ID);
     }
 
     @Override
     public ResponseEvent analyzeResponse(ResponseEvent response, ModuleContext context) {
-        // Skip non-JSON responses and empty bodies
+        // Only inspect JSON responses that actually have a payload
         if (response.getBody() == null || response.getBody().isEmpty()) {
             return response;
         }
@@ -129,7 +115,7 @@ public class DataLeakPreventionModule implements SecurityModule {
             return response;
         }
 
-        // Skip large responses for performance
+        // Ignore massive responses to keep latency low
         if (response.getBody().length() > 1_048_576) { // 1MB
             return response;
         }
@@ -137,9 +123,9 @@ public class DataLeakPreventionModule implements SecurityModule {
         String body = response.getBody();
         List<Detection> detections = new ArrayList<>();
 
-        // Run all detectors
+        // Check the payload against every regex we have
         for (SensitiveDataDetector detector : DETECTORS) {
-            // Skip JWT token detection on auth endpoints — tokens are intentional there
+            // Don't flag JWTs on login/auth routes
             if ("jwt-token".equals(detector.name) && isAuthPath(response.getPath())) {
                 continue;
             }
@@ -148,7 +134,7 @@ public class DataLeakPreventionModule implements SecurityModule {
             while (matcher.find()) {
                 String match = matcher.group();
 
-                // Run optional validator (e.g., Luhn check for credit cards)
+                // Double check using the validator (if one exists) to avoid false positives
                 if (detector.validator != null && !detector.validator.validate(match)) {
                     continue; // Failed validation — skip (false positive)
                 }
@@ -161,7 +147,7 @@ public class DataLeakPreventionModule implements SecurityModule {
             return response;
         }
 
-        // Log all detections
+        // Log what we found
         for (Detection d : detections) {
             log.warn("[SentinAI] [data-leak-prevention] Sensitive data detected in response to {}: " +
                     "type={}, value={}...{}",
@@ -175,14 +161,14 @@ public class DataLeakPreventionModule implements SecurityModule {
         String moduleMode = getModuleMode(context);
 
         if ("BLOCK".equalsIgnoreCase(moduleMode) && isActiveMode) {
-            // Return empty body with error
+            // Drop the payload entirely
             log.error("[SentinAI] [data-leak-prevention] BLOCKED response to {} — {} sensitive items found",
                     response.getPath(), detections.size());
             return response.withBody("{\"error\":\"Response blocked by SentinAI: contains sensitive data\"}");
         }
 
         if ("REDACT".equalsIgnoreCase(moduleMode) || isActiveMode) {
-            // Redact all detected values
+            // Mask out the sensitive bits and return the rest
             String redactedBody = body;
             for (Detection d : detections) {
                 redactedBody = redactedBody.replace(d.matchedValue, REDACTED);
@@ -193,11 +179,10 @@ public class DataLeakPreventionModule implements SecurityModule {
             return response.withBody(redactedBody);
         }
 
-        // LOG mode — just warn, don't modify
+        // If we're just in LOG mode, let it through as-is
         return response;
     }
 
-    // --- Luhn Algorithm (Credit Card Validation) ---
     private static boolean luhnCheck(String number) {
         String digits = number.replaceAll("[^0-9]", "");
         if (digits.length() < 13 || digits.length() > 19)
@@ -219,8 +204,7 @@ public class DataLeakPreventionModule implements SecurityModule {
     }
 
     /**
-     * Check if the given path is an authentication endpoint where JWT tokens
-     * should NOT be redacted (the frontend needs them).
+     * Auth routes where we actually want to give the user a JWT.
      */
     private boolean isAuthPath(String path) {
         if (path == null)
@@ -237,10 +221,8 @@ public class DataLeakPreventionModule implements SecurityModule {
     private String getModuleMode(ModuleContext context) {
         var config = context.getProperties().getModuleConfig(ID);
         Object mode = config.get("mode");
-        return mode != null ? mode.toString() : "LOG"; // Default to LOG for safety
+        return mode != null ? mode.toString() : "LOG"; // Play it safe if not configured
     }
-
-    // --- Internal classes ---
 
     @FunctionalInterface
     interface Validator {
