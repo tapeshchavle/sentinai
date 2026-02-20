@@ -30,15 +30,15 @@ By operating post-authentication, SentinAI knows exactly *who* the user is, not 
 
 ---
 
-## 🏗️ How It Works: Scalable Architecture
+## 🏗️ How It Works: Scalable Microservice Architecture
 
-SentinAI is designed for modern, scalable, distributed architectures. Rather than acting as an external proxy, SentinAI embeds directly into your Spring Boot application, giving it full context over authenticated users. It deeply integrates with a shared Redis cluster to synchronize threat intelligence across your entire infrastructure.
+SentinAI is designed for modern, scalable, distributed architectures. Rather than burying security inside individual microservices, SentinAI drops perfectly into your **Spring Cloud Gateway** — acting as a centralized, intelligent load balancer and ingress controller. It protects all your downstream microservices at the organizational boundary, while integrating with a shared Redis cluster to synchronize threat intelligence.
 
 ```mermaid
 graph TD
     classDef default fill:#2b2b2b,stroke:#555,stroke-width:1px,color:#fff;
-    classDef edge fill:#1e1e1e,stroke:#f57c00,stroke-width:2px,color:#fff;
-    classDef lb fill:#1e1e1e,stroke:#0288d1,stroke-width:2px,color:#fff;
+    classDef client fill:#1e1e1e,stroke:#0288d1,stroke-width:2px,color:#fff;
+    classDef gateway fill:#1a1a1a,stroke:#f57c00,stroke-width:2px,color:#fff;
     classDef app fill:#1a1a1a,stroke:#388e3c,stroke-width:2px,color:#fff;
     classDef moduleRed fill:#b71c1c,stroke:#ff5252,stroke-width:1px,color:#fff;
     classDef moduleBlue fill:#0d47a1,stroke:#448aff,stroke-width:1px,color:#fff;
@@ -47,19 +47,14 @@ graph TD
     classDef moduleOrange fill:#e65100,stroke:#ffd740,stroke-width:1px,color:#fff;
     classDef ext fill:#1e1e1e,stroke:#eceff1,stroke-width:2px,color:#fff;
     
-    subgraph ClientLayer [🌍 Edge & Routing]
-        User[User / Attacker]
-        WAF[CDN & Edge WAF]:::edge
-        LB[Load Balancer / Ingress]:::lb
-        
-        User -->|HTTPS Request| WAF
-        WAF -->|Filtered Traffic| LB
+    subgraph ClientLayer [🌍 Edge]
+        User[User / Attacker]:::client
     end
 
-    subgraph AppLayer [🚀 Spring Boot Application Instances]
-        Filter[SentinAI Filter Chain <br/> Intercepts HTTP Traffic]:::app
+    subgraph GatewayLayer [�️ Spring Cloud Gateway Load Balancer & Edge Security]
+        Filter[SentinAI Filter Chain]:::gateway
         
-        subgraph InboundModules [Security Modules <br/> Plugins]
+        subgraph InboundModules [Security Modules Plugin-Based]
             direction TB
             CG[🔑 Credential Guard]:::moduleRed
             QS[🛡️ Query Shield]:::moduleBlue
@@ -69,13 +64,13 @@ graph TD
             QS --> BOLA
         end
         
-        Filter -->|Request Processing| InboundModules
-        
-        subgraph ControllerLayer [Your API Services]
-            REST[Spring REST Controllers]:::app
+        subgraph Engine [SentinAI Engine]
+            direction TB
+            AI[AI Analyzer Kimi / OpenAI]
+            Redis[(Redis Decision Store)]:::ext
+            
+            AI -->|Verdict| Redis
         end
-        
-        BOLA -->|✅ Safe Request| REST
         
         subgraph OutboundModules [Outbound Security Modules]
             direction TB
@@ -85,79 +80,72 @@ graph TD
             DLP --> Cost
         end
         
-        REST -->|Raw Response| OutboundModules
-        Cost -->|Cleaned Response| Filter
-        
-        subgraph Engine [SentinAI Engine Thread]
-            direction TB
-            AI[AI Analyzer Kimi / OpenAI]
-            RemoteLLM{{External LLM API}}:::ext
-            
-            AI <-->|Tokens & Context| RemoteLLM
-        end
+        Filter -->|Intercept Request| InboundModules
+        Redis -.->|Global Block/Allow| Filter
     end
     
-    subgraph DataLayer [💾 Scalable Data & State]
-        DB[(Primary Database)]:::ext
-        Redis[(Shared Redis Decision Store)]:::ext
+    subgraph MicroservicesLayer [🚀 Your API Services Downstream Microservices]
+        direction LR
+        REST1[User Service]:::app
+        REST2[Order Service]:::app
+        REST3[Inventory Service]:::app
     end
     
-    %% API to DB
-    REST <-->|DB Queries| DB
+    subgraph DataLayer [💾 Scalable Database Architecture]
+        Master[(Master DB <br/> Writes)]:::ext
+        Replica[(Slave DB <br/> Reads)]:::ext
+        Master -.->|Replication| Replica
+    end
+    
+    %% Main Flow
+    User -->|HTTPS Request| Filter
+    
+    BOLA -->|✅ Safe Request Location Routing| REST1 & REST2 & REST3
+    
+    REST1 & REST2 & REST3 -->|Writes| Master
+    REST1 & REST2 & REST3 -->|Reads| Replica
+    
+    REST1 & REST2 & REST3 -->|Raw Microservice Response| DLP
+    Cost -->|Cleaned Response| User
     
     %% Async Analysis Flow
     QS -.->|Async Analysis Telemetry| AI
     BOLA -.->|Async Analysis Telemetry| AI
-    
-    %% Engine to Redis
-    AI -->|Writes Threat Verdict| Redis
-    
-    %% Redis to Filter Chain Loop
-    Redis -.->|Global Block/Allow Rules| Filter
-    
-    %% Sync Module State
-    CG -.->|Check Rate Counters| Redis
-    Cost -.->|Check Daily Budgets| Redis
-    
-    %% Return to Client
-    Filter -->|HTTP Response| LB
-    LB --> User
 ```
 
 ### Detailed Component Breakdown
 
-#### 1. Edge & Routing Layer (Client -> WAF -> LB)
-- **CDN & Edge WAF (e.g., Cloudflare, AWS WAF):** Handles volumetric DDoS attacks, geographic blocking, and malformed packets. SentinAI does *not* replace your edge WAF; it supplements it by catching the application-layer attacks that slip through.
-- **Load Balancer (e.g., AWS ALB, Nginx):** Distributes traffic across your fleet of Spring Boot application instances. This ensures high availability and horizontal scaling.
+#### 1. Spring Cloud Gateway (The Edge Load Balancer)
+In a microservice ecosystem, SentinAI lives inside your **Spring Cloud Gateway**. Instead of relying on a "dumb" external load balancer (like an AWS ALB) that just passes traffic blindly to your services, the Gateway acts as a highly intelligent ingress controller. Because it runs *after* authentication (like an OAuth2 Resource Server), SentinAI has total context over exactly *who* the user is, not just their IP.
 
-#### 2. SentinAI Filter Chain
-This is the entry point into your application's security context.
-- Runs *after* Spring Security authenticates the user, meaning SentinAI knows the exact `userId` and `roles` of the requester.
-- Immediately checks the **Shared Redis Decision Store** to see if this user or IP has been globally blocked by the AI Analyzer. If blocked, it drops the request instantly with a `403 Forbidden`.
+#### 2. The SentinAI Filter Chain
+This is the entry point. The very first thing the filter chain does is check the centralized **Redis Decision Store** for the current user's session or IP. If a previous async AI analysis flagged them as an attacker, the Gateway instantly drops the connection (`403 Forbidden`) before a single downstream microservice has to waste CPU parsing the request.
 
-#### 3. Inbound Security Modules (Plugin-Based)
-These modules run synchronously on the request thread. They are highly optimized for speed (evaluating in just 1-2 milliseconds).
-- **🔑 Credential Guard:** Checks Redis for rapid login failures targeting specific usernames or browser fingerprints to stop distributed credential stuffing.
-- **🛡️ Query Shield:** Scans incoming payloads for malicious patterns (SQLi, NoSQLi) and maintains a concurrency circuit-breaker to prevent database exhaustion.
-- **🚪 BOLA Detection:** Extracts accessed resource IDs from the URL (e.g., `/api/orders/50`) to build an access profile.
+#### 3. Inbound Security Modules (Synchronous Phase)
+These modules run sequentially on the request thread. They are violently optimized for speed (evaluating in 1-2 milliseconds):
+- **🔑 Credential Guard:** Stops distributed credential stuffing before it hits your User Security Service.
+- **🛡️ Query Shield:** Scans incoming payloads for malicious patterns (SQLi) and maintains a concurrency circuit-breaker to prevent downstream database exhaustion.
+- **🚪 BOLA Detection:** Evaluates the URL parameters (e.g., `/api/orders/50`) to build an access profile and stop BOLA/IDOR iteration.
 
-#### 4. Your API Services & Database
-If the request passes the inbound modules (`✅ Safe`), it reaches your actual application code (`@RestController`), which executes business logic and interacts with your **Primary Database**.
+#### 4. Microservices & The Database (Master/Slave)
+If the request clears the inbound hurdles (`✅ Safe Request`), the Gateway routes it to the correct downstream microservice (User Service, Order Service, etc.). 
+- The microservices then interact with your **Database Cluster**.
+- To prevent database lockups, Microservices issue **Writes to the Master DB** and **Reads from the Slave DBs**, allowing your application to scale horizontally. SentinAI's Query Shield ensures that a malicious query won't bog down either node.
 
 #### 5. Outbound Security Modules
-Before the response is sent back to the load balancer, SentinAI intercepts the outgoing payload.
-- **🔒 Data Leak Prevention:** Scans the raw JSON response for unencrypted secrets (API keys, SSNs, Bcrypt hashes) that a developer might have accidentally returned, redacting them before they hit the network.
-- **💰 Cost Protection:** If the endpoint interacted with an LLM, this module calculates token costs and updates the daily budget in Redis.
+Once the microservice completes its work, it routes the raw JSON response back through the Spring Cloud Gateway. SentinAI intercepts this outbound payload:
+- **🔒 Data Leak Prevention:** Scans the raw JSON response from downstream services for unencrypted secrets (API keys, SSNs, Bcrypt hashes) that a developer might have accidentally returned, redacting them before they hit the open internet.
+- **💰 Cost Protection:** If the endpoint interacted with an LLM, this module calculates token costs and updates the daily budget in Redis. The cleaned response is then finally returned to the Client.
 
 #### 6. SentinAI Engine & Async Analysis
-To absolutely eliminate latency in your core API, complex behavioral analysis is offloaded to a background thread.
+To absolutely ensure that your API Gateway remains fast (zero added latency for heavy checks), complex behavioral analysis is offloaded to a background thread.
 - **Query Shield** and **BOLA Detection** asynchronously stream metadata (not sensitive payloads) to the **SentinAI Engine**.
 - The **AI Analyzer** batches this telemetry and asks an **External LLM** (OpenAI, DeepSeek, Kimi, etc.) to look for complex attack patterns (e.g., "Is this user slowly enumerating object IDs in a way that looks like a reconnaissance attack?").
 - If the AI concludes an attack is happening, it generates a **Verdict**.
 
 #### 7. Shared Redis Decision Store
 - The AI Verdict is written to the Redis cluster as a global **Block/Allow Rule**.
-- Because Redis is distributed, the moment an attacker is blocked by the AI on Instance A, the SentinAI Filter Chains on Instances B, C, and D instantly start blocking that attacker too.
+- Because Redis is distributed, if you are running 5 instances of Spring Cloud Gateway, the moment an attacker is blocked by the AI on Gateway 1, Gateways 2 through 5 instantly enforce the block.
 - Redis also maintains the synchronized counters for Credential Guard (failed logins) and Cost Protection (spent dollars).
 
 ### Performance Impact
