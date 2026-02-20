@@ -118,14 +118,16 @@ graph TD
 #### 1. Spring Cloud Gateway (The Edge Load Balancer)
 In a microservice ecosystem, SentinAI lives inside your **Spring Cloud Gateway**. Instead of relying on a "dumb" external load balancer (like an AWS ALB) that just passes traffic blindly to your services, the Gateway acts as a highly intelligent ingress controller. Because it runs *after* authentication (like an OAuth2 Resource Server), SentinAI has total context over exactly *who* the user is, not just their IP.
 
-#### 2. The SentinAI Filter Chain
-This is the entry point. The very first thing the filter chain does is check the centralized **Redis Decision Store** for the current user's session or IP. If a previous async AI analysis flagged them as an attacker, the Gateway instantly drops the connection (`403 Forbidden`) before a single downstream microservice has to waste CPU parsing the request.
+#### 2. The SentinAI Filter Chain & Request Buffering
+This is the entry point. The very first thing the filter chain does is wrap the `HttpServletRequest` in a `CachedBodyHttpServletRequest`. This allows SentinAI to read the request body (JSON payloads) multiple times without exhausting the input stream, enabling deep inspection of POST data for all downstream modules. 
+
+The filter then checks the centralized **Redis Decision Store** for the current user's session or IP. If a previous async AI analysis flagged them as an attacker, the Gateway instantly drops the connection (`403 Forbidden` or `429 Too Many Requests`) before a single downstream microservice has to waste CPU parsing the request.
 
 #### 3. Inbound Security Modules (Synchronous Phase)
 These modules run sequentially on the request thread. They are violently optimized for speed (evaluating in 1-2 milliseconds):
-- **🔑 Credential Guard:** Stops distributed credential stuffing before it hits your User Security Service.
-- **🛡️ Query Shield:** Scans incoming payloads for malicious patterns (SQLi) and maintains a concurrency circuit-breaker to prevent downstream database exhaustion.
-- **🚪 BOLA Detection:** Evaluates the URL parameters (e.g., `/api/orders/50`) to build an access profile and stop BOLA/IDOR iteration.
+- **🔑 Credential Guard:** Stops distributed credential stuffing by extracting usernames directly from buffered JSON payloads.
+- **🛡️ Query Shield:** Scans incoming payloads (URL parameters and bodies) for malicious patterns. It automatically **URL-decodes** query strings to prevent obfuscated SQLi attacks and maintains a concurrency circuit-breaker.
+- **🚪 BOLA Detection:** Evaluates the URL parameters (e.g., `/api/orders/50`) to build an access profile and stop BOLA/IDOR iteration. It uses **enhanced identity resolution** (including Basic Auth fallback) to track users even before Spring Security populates the context.
 
 #### 4. Microservices & The Database (Master/Slave)
 If the request clears the inbound hurdles (`✅ Safe Request`), the Gateway routes it to the correct downstream microservice (User Service, Order Service, etc.). 
@@ -172,13 +174,13 @@ SentinAI is available on **Maven Central**.
 <dependency>
     <groupId>io.github.tapeshchavle</groupId>
     <artifactId>sentinai-spring-boot-starter</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
 </dependency>
 ```
 
 **Gradle:**
 ```groovy
-implementation 'io.github.tapeshchavle:sentinai-spring-boot-starter:1.0.0'
+implementation 'io.github.tapeshchavle:sentinai-spring-boot-starter:1.1.0'
 ```
 
 ### 2. Set your API Key

@@ -17,6 +17,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.util.ContentCachingResponseWrapper;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.Map;
@@ -49,14 +50,21 @@ public class SentinAISecurityFilter extends OncePerRequestFilter {
             return;
         }
 
+        CachedBodyHttpServletRequest cachedRequest = new CachedBodyHttpServletRequest(request);
         String requestId = UUID.randomUUID().toString().substring(0, 8);
+        long startTime = System.currentTimeMillis();
+        RequestEvent event = null;
 
         try {
-            RequestEvent event = buildRequestEvent(request, requestId);
+            event = buildRequestEvent(cachedRequest, requestId);
             ThreatVerdict verdict = engine.processRequest(event);
 
-            if (verdict.shouldBlock() && properties.isActiveMode()) {
-                response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+            if (verdict.isThreat() && properties.isActiveMode() &&
+                    (verdict.getRecommendedAction() == ThreatVerdict.Action.BLOCK ||
+                            verdict.getRecommendedAction() == ThreatVerdict.Action.THROTTLE)) {
+
+                int status = (verdict.getRecommendedAction() == ThreatVerdict.Action.THROTTLE) ? 429 : 403;
+                response.setStatus(status);
                 response.setContentType("application/json");
                 response.getWriter().write(String.format(
                         "{\"error\":\"Request blocked by SentinAI\",\"reason\":\"%s\",\"requestId\":\"%s\"}",
@@ -70,11 +78,15 @@ public class SentinAISecurityFilter extends OncePerRequestFilter {
         ContentCachingResponseWrapper wrappedResponse = new ContentCachingResponseWrapper(response);
 
         try {
-            filterChain.doFilter(request, wrappedResponse);
+            filterChain.doFilter(cachedRequest, wrappedResponse);
         } catch (Exception e) {
             // Forward any exceptions from the controller, but make sure to flush our
             // response buffer first
             wrappedResponse.copyBodyToResponse();
+            if (event != null) {
+                long duration = System.currentTimeMillis() - startTime;
+                engine.submitForAsyncAnalysis(event.withResponseData(wrappedResponse.getStatus(), duration));
+            }
             throw e;
         }
 
@@ -100,10 +112,15 @@ public class SentinAISecurityFilter extends OncePerRequestFilter {
             log.error("[SentinAI] Outbound analysis error: {}", e.getMessage());
         }
 
+        if (event != null) {
+            long duration = System.currentTimeMillis() - startTime;
+            engine.submitForAsyncAnalysis(event.withResponseData(wrappedResponse.getStatus(), duration));
+        }
+
         wrappedResponse.copyBodyToResponse();
     }
 
-    private RequestEvent buildRequestEvent(HttpServletRequest request, String requestId) {
+    private RequestEvent buildRequestEvent(CachedBodyHttpServletRequest request, String requestId) {
         Map<String, String> headers = new HashMap<>();
         Enumeration<String> headerNames = request.getHeaderNames();
         if (headerNames != null) {
@@ -121,6 +138,25 @@ public class SentinAISecurityFilter extends OncePerRequestFilter {
             }
         } catch (Exception e) {
             // Could not extract security context, they are likely not logged in
+        }
+
+        // Fallback for demo when security context is not fully populated for unmapped
+        // routes
+        if (userId == null) {
+            String authHeader = request.getHeader("Authorization");
+            if (authHeader != null && authHeader.toLowerCase().startsWith("basic ")) {
+                try {
+                    String base64Credentials = authHeader.substring("Basic".length()).trim();
+                    byte[] credDecoded = java.util.Base64.getDecoder().decode(base64Credentials);
+                    String credentials = new String(credDecoded, StandardCharsets.UTF_8);
+                    final String[] values = credentials.split(":", 2);
+                    if (values.length > 0) {
+                        userId = values[0]; // just grab the username
+                    }
+                } catch (Exception e) {
+                    // ignore
+                }
+            }
         }
 
         String sourceIp = request.getHeader("X-Forwarded-For");
@@ -144,6 +180,7 @@ public class SentinAISecurityFilter extends OncePerRequestFilter {
                 .userAgent(request.getHeader("User-Agent"))
                 .userId(userId)
                 .sessionId(request.getSession(false) != null ? request.getSession().getId() : null)
+                .body(request.getBody())
                 .build();
     }
 

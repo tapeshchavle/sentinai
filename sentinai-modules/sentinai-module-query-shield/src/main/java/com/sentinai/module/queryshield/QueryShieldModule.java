@@ -88,6 +88,10 @@ public class QueryShieldModule implements SecurityModule {
         // Check for wildcard abuse in the query params
         String queryParam = event.getQueryString();
         if (queryParam != null) {
+            try {
+                queryParam = java.net.URLDecoder.decode(queryParam, java.nio.charset.StandardCharsets.UTF_8);
+            } catch (Exception e) {
+            }
             for (Pattern p : WILDCARD_PATTERNS) {
                 for (String part : queryParam.split("&")) {
                     String[] kv = part.split("=", 2);
@@ -157,8 +161,13 @@ public class QueryShieldModule implements SecurityModule {
 
     private String buildFullQuery(RequestEvent event) {
         StringBuilder sb = new StringBuilder();
-        if (event.getQueryString() != null)
-            sb.append(event.getQueryString());
+        if (event.getQueryString() != null) {
+            try {
+                sb.append(java.net.URLDecoder.decode(event.getQueryString(), java.nio.charset.StandardCharsets.UTF_8));
+            } catch (Exception e) {
+                sb.append(event.getQueryString());
+            }
+        }
         if (event.getBody() != null)
             sb.append(" ").append(event.getBody());
         return sb.toString();
