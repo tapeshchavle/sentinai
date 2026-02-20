@@ -1,28 +1,96 @@
 # 🔑 Credential Guard
 
-**Detects slow-burn credential stuffing and brute-force attacks that bypass traditional rate limiters.**
+**Detects slow-burn credential stuffing and brute-force attacks that easily bypass traditional IP rate limiters.**
 
-## The Problem
+---
 
-Attackers cycle through thousands of IPs with 1-2 login attempts each. Per-IP rate limits see nothing. Meanwhile, account `john@company.com` gets hit 10,000 times across 5,000 different IPs.
+## 🛑 The Problem: What Existed Before
+Traditional rate limiters are almost entirely IP-based. For example, a standard WAF rule might say: *"Block any IP that fails to login 5 times in 1 minute."*
 
-## How It Works
+**Here's the problem:**
+Modern attackers don't try 10,000 passwords from a single IP address. They use vast proxy networks or botnets containing thousands of different IP addresses. 
 
-![Credential Guard](images/credential-guard.png)
+They will try logging into `alice@company.com` 5,000 times, but each attempt comes from a *different* IP address. To your standard WAF or gateway, every single IP has only failed once. The IP rate limiter never triggers, and the attacker eventually guesses Alice's password.
 
-**Three tracking dimensions** (not just IP):
+## 💡 The Solution: Credential Guard
+Instead of just counting failures per IP, SentinAI's Credential Guard tracks failures across multiple dimensions simultaneously:
+1. **Per-Username:** It tracks how many times *anyone*, from *any* IP, has failed to log into a specific account (e.g., `alice@company.com`).
+2. **Per-Fingerprint:** It tracks how many failures are coming from the same browser/device fingerprint, even if the IP address keeps changing.
+3. **Global Spike:** It monitors the overall failure rate across the entire application to detect massive botnet activity.
 
-| Dimension | What It Tracks | Default Threshold |
+---
+
+## 🏗️ How It Works (Architecture)
+
+Credential Guard intercepts traffic at your login endpoints (auto-detected via paths like `/login`, `/auth`, `/signin`) and tracks failures using a rolling window in your shared Redis cluster.
+
+```mermaid
+graph TD
+    %% Styling
+    classDef attacker fill:#ffebee,stroke:#b71c1c,stroke-width:2px;
+    classDef proxy fill:#eceff1,stroke:#546e7a,stroke-width:1px,stroke-dasharray: 5 5;
+    classDef app fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px;
+    classDef redis fill:#fff3e0,stroke:#e65100,stroke-width:2px;
+
+    %% Nodes
+    A1((Attacker Node 1)):::attacker
+    A2((Attacker Node 2)):::attacker
+    A3((Attacker Node N)):::attacker
+    
+    P1[Proxy IP: 1.1.1.1]:::proxy
+    P2[Proxy IP: 2.2.2.2]:::proxy
+    P3[Proxy IP: 3.3.3.3]:::proxy
+    
+    MyApp[Spring Boot App <br> Credential Guard Module]:::app
+    Redis[(Redis Cluster <br> Failure Counters)]:::redis
+    DB[(User Database)]
+    
+    %% Connections
+    A1 -->|Try: alice@demo.com| P1
+    A2 -->|Try: alice@demo.com| P2
+    A3 -->|Try: alice@demo.com| P3
+    
+    P1 --> MyApp
+    P2 --> MyApp
+    P3 --> MyApp
+    
+    %% Internal Logic
+    subgraph "Credential Guard Evaluation"
+        direction TB
+        Check[Check Redis Counters]
+        Login[Attempt Login]
+        Update[Increment Redis Counters]
+        
+        Check -.->|If counters > threshold| Block[Return 403 Forbidden]
+        Check -->|If counters OK| Login
+        
+        Login -->|Auth Success| Clear[Clear Redis Counters]
+        Login -->|Auth Failed| Update
+    end
+    
+    MyApp --> Check
+    Login --> DB
+    Check <--> Redis
+    Update --> Redis
+    Clear --> Redis
+```
+*Note: Because the counters are stored in a distributed Redis cluster, if `Proxy 1` hits Instance A, and `Proxy 2` hits Instance B, both instances are updating and reading the exact same failure counter for `alice@demo.com`.*
+
+---
+
+## ⚡ Default Thresholds
+
+| Tracking Dimension | What It Tracks | Default Threshold |
 |:---|:---|:---|
-| Per-Username | Failed logins targeting the same account | 10 failures / 5 min |
-| Per-Fingerprint | Same browser signature across IPs | 20 failures / 5 min |
-| Global Rate | Total failure spike (may indicate system issue) | 500 failures / 5 min |
+| **Per-Username** | Failed logins targeting the exact same account | 10 failures / 5 min |
+| **Per-Fingerprint**| Failed logins from the same browser signature | 20 failures / 5 min |
+| **Global Rate** | Total failure spike across the whole app | 500 failures / 5 min |
 
-**Auto-detection** — Recognizes login endpoints by path: `/login`, `/auth`, `/signin`, `/token`, `/authenticate`.
+---
 
-## Independent Installation
+## 📦 Independent Installation
 
-If you don't want the full `sentinai-spring-boot-starter`, you can include just this module:
+If you prefer to keep your dependencies light and don't want the full `sentinai-spring-boot-starter`, you can install just this module:
 
 ```xml
 <dependency>
@@ -32,9 +100,12 @@ If you don't want the full `sentinai-spring-boot-starter`, you can include just 
 </dependency>
 ```
 
-## Integration
+---
 
-### Minimal (zero config)
+## ⚙️ Configuration
+
+### Minimal (Zero Config)
+If you are using the starter, Credential Guard is enabled by default with sensible limits.
 ```yaml
 sentinai:
   ai:
@@ -42,22 +113,25 @@ sentinai:
 # Credential Guard auto-enables and monitors all login-like endpoints
 ```
 
-### Custom Config
+### Custom Limits
+If you want to tighten or loosen the thresholds, simply adjust them in your `application.yml`:
 ```yaml
 sentinai:
   modules:
     credential-guard:
       enabled: true
       config:
-        per-username-failures: 10
-        global-failure-spike: 500
+        per-username-failures: 5   # Lock down an account faster
+        global-failure-spike: 1000 # Allow more global noise
 ```
 
-## Edge Cases Handled
+---
 
-| Scenario | How It's Handled |
+## 🛡️ Edge Cases Handled
+
+| Scenario | How SentinAI Handles It |
 |:---|:---|
-| IP rotation (5,000 IPs) | Tracks by **target username**, not by source IP |
-| Distributed botnet | Fingerprint grouping detects same browser across IPs |
-| Legitimate password reset | Single failure doesn't trigger — needs threshold breach |
-| Global spike (system issue) | Logged as suspicious, not blocked (could be a deployment bug) |
+| **IP rotation (Proxy Networks)** | It tracks by **target username**, meaning changing IPs doesn't reset the counter. |
+| **Distributed Botnet** | The browser fingerprint grouping detects the same bot tool being used across multiple IPs. |
+| **Legitimate User Forgetting Password** | A single or double failure doesn't trigger a lock. Only breaching the threshold (e.g., 10 times in 5 mins) triggers a block. |
+| **Global System Outage** | If the DB goes down and *everyone* fails to login, this triggers the Global Spike monitor. It is logged as highly suspicious but won't permanently block IPs (which helps avoid self-inflicted Denial of Service). |

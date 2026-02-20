@@ -7,15 +7,129 @@
 [![Spring Boot 3.4+](https://img.shields.io/badge/Spring%20Boot-3.4%2B-brightgreen)](https://spring.io/projects/spring-boot)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-SentinAI is a Spring Boot Starter that protects your APIs using AI-driven threat detection. It catches attacks that static WAFs and rate limiters miss — credential stuffing, application-layer DDoS, data leaks, and authorization bypasses.
+---
+
+## 🛑 The Problem: What Existed Before
+If you've ever deployed an API to production, you've probably put it behind an API Gateway or a Web Application Firewall (WAF) like Cloudflare, AWS WAF, or Nginx. 
+
+**Here's the problem with traditional WAFs:**
+They sit *outside* your application. They look at HTTP traffic (headers, IPs, raw payloads) but they have absolutely zero context about your business logic or who the user actually is. 
+
+- A WAF sees: `GET /api/users/5 (IP: 192.168.1.10) (Token: eyJhbGci...)`
+- Your App sees: `GET /api/users/5 (User: Alice)`
+
+Because WAFs are blind to app context, attackers easily bypass them:
+1. **Distributed Credential Stuffing:** Attackers use millions of rotating proxy IPs to try leaked passwords. An IP-based rate limiter will never trigger because each IP only makes one request.
+2. **Broken Object Level Authorization (BOLA/IDOR):** An authenticated user changes `/api/receipts/1` to `/api/receipts/2`. Both requests look perfectly legitimate to a WAF, so it lets them through.
+3. **Application-Layer DDoS:** Attackers send legitimate-looking but complex database queries (like heavy search wildcards). WAFs see valid JSON and allow it; your database chokes and dies.
+
+## 💡 The Solution: SentinAI
+Instead of trying to secure your app from the outside, **SentinAI sits *inside* your Spring Boot application**, right inside the Spring Security filter chain. 
+
+By operating post-authentication, SentinAI knows exactly *who* the user is, not just their IP address. It runs lightweight synchronous heuristics to catch immediate threats (like regex patterns or concurrency limits) and uses asynchronous AI analysis via LLMs (OpenAI, DeepSeek, Nvidia NIM) to catch complex behavioral anomalies like BOLA and slow-burn credential stuffing.
 
 ---
 
-## Installation
+## 🏗️ Architecture
 
-SentinAI is available on **Maven Central** — no extra repository config needed.
+SentinAI is designed for modern, scalable, distributed architectures. 
 
-### Maven
+When your application is deployed across multiple instances (e.g., in Kubernetes or behind an AWS Application Load Balancer), SentinAI uses a shared **Redis Cluster** to keep track of state. If an attacker tries a password on Instance A, Instance B instantly knows about it.
+
+```mermaid
+graph TD
+    %% Define Styles
+    classDef client fill:#e1f5fe,stroke:#01579b,stroke-width:2px;
+    classDef edge fill:#fff3e0,stroke:#e65100,stroke-width:2px;
+    classDef compute fill:#f3e5f5,stroke:#4a148c,stroke-width:2px;
+    classDef app fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px;
+    classDef storage fill:#ffebee,stroke:#b71c1c,stroke-width:2px;
+    classDef ai fill:#ede7f6,stroke:#311b92,stroke-width:2px;
+
+    %% Nodes
+    Users((Clients / Browsers)):::client
+    CDN[CDN & Edge WAF <br> e.g. Cloudflare]:::edge
+    LB{Load Balancer / Ingress}:::compute
+    
+    subgraph "Spring Boot Application Network"
+        App1[Spring Boot Instance 1]:::app
+        App2[Spring Boot Instance 2]:::app
+        App3[Spring Boot Instance N]:::app
+    end
+    
+    Redis[(Shared Redis Cluster <br> Rate limits, Blacklists, IDs)]:::storage
+    DB[(Primary Database)]:::storage
+    LLM{{External AI Provider <br> OpenAI / Nvidia NIM}}:::ai
+    
+    %% Application Internals
+    subgraph "Inside Spring Boot"
+        direction TB
+        SpringSec[Spring Security <br> Context: Auth & UserID]
+        Engine[SentinAI Engine]
+        
+        subgraph "SentinAI Modules"
+            Mod1[Credential Guard]
+            Mod2[Query Shield]
+            Mod3[BOLA Detection]
+            Mod4[Data Leak Prevention]
+        end
+        
+        Engine --> Mod1 & Mod2 & Mod3 & Mod4 
+        Controller[Spring MVC / RestController]
+        
+        SpringSec -.->|Post-Auth| Engine
+        Engine -.->|Sync Safe| Controller
+        Controller -.->|Response| Engine
+    end
+    
+    %% Connections
+    Users -->|HTTPS| CDN
+    CDN -->|Filtered| LB
+    LB --> App1 & App2 & App3
+    
+    App1 -->|State/Sync| Redis
+    App2 -->|State/Sync| Redis
+    App3 -->|State/Sync| Redis
+    
+    App1 -.->|Async Batch| LLM
+    
+    Controller --> DB
+    
+    %% Notes
+    class App1 app
+```
+
+### How the Flow Works:
+1. **Edge:** Traffic hits your CDN/WAF. Basic attacks (bad IPs, malformed headers) are dropped here.
+2. **Ingress:** Traffic is routed through your Load Balancer to one of your Spring Boot instances.
+3. **Spring Security:** The app authenticates the user. We now know their identity (e.g., `userId: 1045`).
+4. **SentinAI Engine:** Before hitting the Controller, SentinAI intercepts the request. 
+   - It checks the **Shared Redis Cluster** to see if this user/IP/fingerprint is globally blocked across your fleet.
+   - It runs synchronous, low-latency checks (like regex scanning or circuit breakers).
+5. **Controller:** If safe, the request hits your actual `@RestController` and database.
+6. **Response Phase:** SentinAI intercepts the outbound response to scan for leaked data (like SSNs or API keys) before it goes back to the client.
+7. **Async AI:** In the background, SentinAI batches request metadata and sends it to your **External AI Provider** for deep behavioral analysis. If the AI detects an anomaly, it writes a block command to Redis, protecting all instances instantly.
+
+### Performance Impact
+SentinAI is built to be fast. The heavy AI lifting is done completely asynchronously.
+
+| Operation | Latency Added |
+|:---|:---|
+| Blacklist check (Redis) | ~1ms |
+| Regex pattern matching | ~0.1ms |
+| DLP response scan | ~2-5ms |
+| **Total sync overhead** | **~3-7ms** |
+| AI analysis (async) | **0ms** *(background thread)* |
+
+---
+
+## 🚀 Quick Start
+
+### 1. Add the Dependency
+
+SentinAI is available on **Maven Central**.
+
+**Maven:**
 ```xml
 <dependency>
     <groupId>io.github.tapeshchavle</groupId>
@@ -24,32 +138,22 @@ SentinAI is available on **Maven Central** — no extra repository config needed
 </dependency>
 ```
 
-### Gradle
+**Gradle:**
 ```groovy
 implementation 'io.github.tapeshchavle:sentinai-spring-boot-starter:1.0.0'
 ```
 
-### Gradle (Kotlin DSL)
-```kotlin
-implementation("io.github.tapeshchavle:sentinai-spring-boot-starter:1.0.0")
-```
+### 2. Set your API Key
+Add this to your `application.yml` or `application.properties`:
 
----
-
-## Quick Start
-
-### 1. Add Dependency
-Add the Maven/Gradle snippet above to your project. No repository configuration needed.
-
-### 2. Set API Key
 ```yaml
 sentinai:
   ai:
     api-key: ${AI_API_KEY}
 ```
 
-### 3. Done.
-SentinAI starts in **MONITOR mode** — logs threats but doesn't block. Review logs, then switch to `ACTIVE`.
+### 3. You're Done.
+SentinAI starts in **MONITOR mode** by default. It will log threats but it won't actually block any of your users. Once you are comfortable with what it's catching, just change the mode to `ACTIVE`.
 
 ```
 [SentinAI] Starting in MONITOR mode
@@ -60,49 +164,32 @@ SentinAI starts in **MONITOR mode** — logs threats but doesn't block. Review l
 
 ---
 
-## Architecture
+## 🛡️ The Modules
 
-> SentinAI sits **inside** Spring Security's filter chain — not as a separate gateway. It runs **after** authentication so it knows who the user is.
-
-### Performance Impact
-
-| Operation | Latency Added |
-|:---|:---|
-| Blacklist check (Redis/Memory) | ~1ms |
-| Regex pattern matching | ~0.1ms |
-| BOLA ID tracking | ~0.5ms |
-| DLP response scan | ~2-5ms |
-| **Total sync overhead** | **~3-7ms** |
-| AI analysis (async) | **0ms** *(background thread)* |
+| Module | The Problem it Solves | Docs |
+|:---|:---|:---|
+| 🔑 **Credential Guard** | Distributed, slow-burn credential stuffing attacks that bypass IP rate limits. | [Read More](docs/credential-guard.md) |
+| 🛡️ **Query Shield** | Application-layer DDoS attacks that crash databases via expensive queries. | [Read More](docs/query-shield.md) |
+| 🔒 **Data Leak Prevention** | Accidental exposure of PII, SSNs, and API keys in outbound JSON responses. | [Read More](docs/data-leak-prevention.md) |
+| 💰 **Cost Protection** | Bad actors running up massive LLM token bills on your AI integrations. | [Read More](docs/cost-protection.md) |
+| 🚪 **BOLA Detection** | Users manipulating resource IDs in URLs to access data that doesn't belong to them. | [Read More](docs/bola-detection.md) |
 
 ---
 
-## Features
-
-| Module | Problem | Auto-Enabled | Docs |
-|:---|:---|:---|:---|
-| 🔑 **Credential Guard** | Slow-burn brute force attacks | ✅ | [docs/credential-guard.md](docs/credential-guard.md) |
-| 🛡️ **Query Shield** | App-layer DDoS via expensive queries | ✅ | [docs/query-shield.md](docs/query-shield.md) |
-| 🔒 **Data Leak Prevention** | Passwords, SSNs, API keys in responses | ✅ | [docs/data-leak-prevention.md](docs/data-leak-prevention.md) |
-| 💰 **Cost Protection** | AI API bill shock | ⚙️ Needs budget | [docs/cost-protection.md](docs/cost-protection.md) |
-| 🚪 **BOLA Detection** | Users accessing other users' data | ⚙️ Needs config | [docs/bola-detection.md](docs/bola-detection.md) |
-
----
-
-## Full Configuration
+## ⚙️ Full Configuration example
 
 ```yaml
 sentinai:
   enabled: true
-  mode: MONITOR              # MONITOR or ACTIVE
+  mode: MONITOR              # Change to ACTIVE to actually block threats
   ai:
     provider: openai
     api-key: ${AI_API_KEY}
-    model: moonshotai/kimi-k2-instruct
+    model: moonshotai/kimi-k2-instruct # Customizable
     base-url: https://integrate.api.nvidia.com
   store:
-    type: in-memory           # in-memory or redis
-    redis-url: redis://localhost:6379
+    type: redis               # Highly recommended for multi-instance deployments
+    redis-url: redis://localhost:6379 
   modules:
     credential-guard:
       enabled: true
@@ -126,7 +213,8 @@ sentinai:
 
 ---
 
-## Custom Module
+## 🛠️ Extending it: Custom Modules
+Building your own security check is incredibly easy. Just implement the `SecurityModule` interface and annotate it with `@Component`. SentinAI will automatically discover it and slot it into the processing pipeline.
 
 ```java
 @Component
@@ -140,43 +228,29 @@ public class CouponFraudDetector implements SecurityModule {
 
     @Override
     public ThreatVerdict analyzeRequest(RequestEvent event, ModuleContext ctx) {
-        // Your detection logic — runs synchronously (keep it fast!)
+        // Your bespoke detection logic.
+        // E.g., check if the user is applying too many coupons too quickly.
         return ThreatVerdict.safe(getId());
     }
 }
 ```
 
-SentinAI auto-discovers any `@Component` implementing `SecurityModule`.
-
 ---
 
-## Available Artifacts on Maven Central
+## 📦 Maven Central Artifacts
 
-All modules are published under `io.github.tapeshchavle`:
+We publish in a modular format. You can pull in the starter to get everything, or pick and choose specific modules to keep your application size down.
 
-| Artifact | Description |
+| Artifact | Purpose |
 |:---|:---|
-| `sentinai-spring-boot-starter` | ⭐ Use this — pulls in everything automatically |
-| `sentinai-core` | Core engine, plugin system, and shared models |
-| `sentinai-module-credential-guard` | Credential stuffing detection module |
-| `sentinai-module-query-shield` | App-layer DDoS protection module |
-| `sentinai-module-data-leak-prevention` | Data leak prevention module |
-| `sentinai-module-cost-protection` | AI cost protection module |
-| `sentinai-module-bola-detection` | BOLA/IDOR detection module |
+| `sentinai-spring-boot-starter` | ⭐ **Use this.** It automatically pulls in the core and all bundled modules. |
+| `sentinai-core` | The base engine and plugin system if you just want to write your own modules. |
+| `sentinai-module-[name]` | Individual threat detection modules. |
 
-Browse on Maven Central: [search.maven.org](https://search.maven.org/search?q=g:io.github.tapeshchavle)
+Browse all artifacts on Maven Central: [search.maven.org](https://search.maven.org/search?q=g:io.github.tapeshchavle)
 
 ---
 
-## Tech Stack
+## 📄 License
 
-- **Java 17+** / **Spring Boot 3.4+**
-- **Spring Security** filter chain integration
-- **Spring AI** (OpenAI-compatible — Kimi, Nvidia NIM, Ollama)
-- **Redis** (production) or **In-Memory** (development)
-
----
-
-## License
-
-MIT License — see [LICENSE](LICENSE) for details.
+Distributed under the MIT License. See [LICENSE](LICENSE) for more information.
