@@ -74,7 +74,7 @@ graph TD
     Update --> Redis
     Clear --> Redis
 ```
-*Note: Because the counters are stored in a distributed Redis cluster, if `Proxy 1` hits Instance A, and `Proxy 2` hits Instance B, both instances are updating and reading the exact same failure counter for `alice@demo.com`.*
+*Note: Credential Guard uses `CachedBodyHttpServletRequest` to buffer and read JSON payloads (e.g., login usernames) synchronously without exhausting the request stream for downstream controllers. It synchronizes failure counters across the shared Redis cluster.*
 
 ---
 
@@ -96,7 +96,7 @@ If you prefer to keep your dependencies light and don't want the full `sentinai-
 <dependency>
     <groupId>io.github.tapeshchavle</groupId>
     <artifactId>sentinai-module-credential-guard</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
 </dependency>
 ```
 
