@@ -95,7 +95,7 @@ If you prefer a lightweight footprint and don't want the full starter, you can p
 <dependency>
     <groupId>io.github.tapeshchavle</groupId>
     <artifactId>sentinai-module-data-leak-prevention</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
 </dependency>
 ```
 
