@@ -13,7 +13,6 @@ target/
 # IDEs
 .idea/
 *.iml
-.vscode/
 *.classpath
 *.project
 *.settings/
@@ -25,3 +24,7 @@ Thumbs.db
 # SentinAI Specific
 # User requested NOT to push the sample app
 sentinai-sample/
+branch_structure.json
+temp_auto_push.bat
+temp_interactive_push.bat
+.gitignore
