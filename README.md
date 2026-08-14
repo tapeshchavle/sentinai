@@ -1,4 +1,4 @@
-# SentinAI
+ # SentinAI
 
 **AI-Powered API Security for Spring Boot — Just Add a Dependency.**
 
